@@ -26,7 +26,8 @@
 
 ### 1. 克隆项目
 ```bash
-git clone <repository-url>
+git clone git@github.com:liuzijun12/code_review.git
+git clone https://github.com/liuzijun12/code_review.git
 cd code_review
 ```
 
