@@ -112,8 +112,108 @@ class WebhookService:
             return response
     
     def _trigger_recent_commits_get(self):
-        """触发获取最近提交的GET请求"""
-        return self.data_client.get_data('recent_commits', branch='main', limit=5)
+        """触发获取最近提交的GET请求，并保存到数据库"""
+        print("🔄 触发recent_commits GET请求并保存到数据库...")
+        
+        # 获取recent_commits数据
+        result = self.data_client.get_data('recent_commits', branch='main', limit=5)
+        
+        if result.get('status') == 'success':
+            try:
+                # 添加数据库保存逻辑（类似views.py中的逻辑）
+                if 'commits_data' in result and 'commits' in result['commits_data']:
+                    commits = result['commits_data']['commits']
+                    saved_count = 0
+                    
+                    print(f"📊 开始保存 {len(commits)} 个提交到数据库...")
+                    
+                    for commit in commits:
+                        try:
+                            # 为每个提交获取详细信息（包含diff）
+                            detail_result = self.data_client.get_data('commit_details', 
+                                                                   sha=commit['sha'], 
+                                                                   include_diff=True)
+                            
+                            if detail_result.get('status') == 'success':
+                                # 使用详细信息构造GitHub数据格式
+                                commit_detail = detail_result['commit_detail']['commit']
+                                github_data = {
+                                    'sha': commit_detail['sha'],
+                                    'commit': {
+                                        'author': {
+                                            'name': commit_detail['author']['name'],
+                                            'email': commit_detail['author']['email'],
+                                            'date': commit_detail['timestamp']['authored_date']
+                                        },
+                                        'message': commit_detail['message']
+                                    },
+                                    'author': {
+                                        'login': commit_detail['author']['username'],
+                                        'avatar_url': commit_detail['author'].get('avatar_url')
+                                    },
+                                    'html_url': commit_detail['urls']['html_url'],
+                                    'url': commit_detail['urls']['api_url'],
+                                    'stats': commit_detail.get('stats', {}),
+                                    'files': commit_detail.get('files', []),
+                                    'parents': commit_detail.get('parents', []),
+                                    'patch': commit_detail.get('raw_patch', '')
+                                }
+                            else:
+                                # 如果获取详细信息失败，使用简化版本
+                                github_data = {
+                                    'sha': commit['sha'],
+                                    'commit': {
+                                        'author': {
+                                            'name': commit['author'],
+                                            'email': 'unknown@example.com',
+                                            'date': commit['date']
+                                        },
+                                        'message': commit['message']
+                                    },
+                                    'author': {
+                                        'login': 'unknown',
+                                        'avatar_url': None
+                                    },
+                                    'html_url': commit['url'],
+                                    'url': commit['url'],
+                                    'stats': {},
+                                    'files': [],
+                                    'parents': [],
+                                    'patch': ''
+                                }
+                            
+                            # 保存到数据库
+                            from .sql_client import DatabaseClient
+                            success, message, _ = DatabaseClient.save_commit_to_database(github_data)
+                            if success:
+                                saved_count += 1
+                                print(f"✅ 保存提交: {commit['sha'][:8]} - {message}")
+                            else:
+                                print(f"❌ 保存失败: {commit['sha'][:8]} - {message}")
+                                
+                        except Exception as commit_error:
+                            print(f"❌ 处理提交 {commit['sha'][:8]} 时出错: {commit_error}")
+                            continue
+                    
+                    # 在结果中添加数据库保存状态
+                    result['database_save'] = {
+                        'success': True,
+                        'message': f'Webhook触发：批量保存完成，成功保存 {saved_count}/{len(commits)} 个提交',
+                        'saved_count': saved_count,
+                        'total_count': len(commits)
+                    }
+                    
+                    print(f"📊 数据库保存完成：{saved_count}/{len(commits)} 个提交")
+                    
+            except Exception as e:
+                print(f"❌ 数据库保存过程出错: {e}")
+                result['database_save'] = {
+                    'success': False,
+                    'message': f'Webhook触发：数据库保存失败: {str(e)}',
+                    'saved_count': 0
+                }
+        
+        return result
     
     def _trigger_webhook_status_get(self):
         """触发webhook状态检查的GET请求"""
