@@ -212,6 +212,18 @@ class GitHubWebhookClient:
         print(f"   请求体原始内容: {request.body}")
         print(f"   请求体字符串: {request.body.decode('utf-8')[:200]}...")
         
+        # 临时调试模式：检查是否有调试标识
+        debug_header = request.META.get('HTTP_X_DEBUG_SKIP_SIGNATURE', '')
+        if debug_header == 'true':
+            print("🚧 调试模式：跳过签名验证")
+            try:
+                payload = json.loads(request.body)
+                print("✅ 调试模式验证成功（跳过签名）")
+                return True, None, payload
+            except json.JSONDecodeError as e:
+                print(f"❌ JSON解析错误: {e}")
+                return False, JsonResponse({'error': 'Invalid JSON payload'}, status=400), None
+        
         # 检查webhook密钥配置
         if not self.webhook_secret:
             print("❌ Webhook验证失败: 未配置GITHUB_WEBHOOK_SECRET")

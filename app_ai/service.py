@@ -59,13 +59,20 @@ class WebhookService:
         Returns:
             JsonResponse: 增强后的响应
         """
+        print(f"🔍 检查响应状态码: {response.status_code}")
+        print(f"📋 事件类型: {event_type}")
+        
         if response.status_code == 200:
+            print("✅ 状态码200，开始触发GET请求...")
             try:
                 # 解析原响应数据
                 response_data = json.loads(response.content.decode('utf-8'))
+                print(f"📄 原始响应数据: {response_data}")
                 
                 # 触发GET请求
+                print(f"🚀 调用GET触发函数: {get_trigger_func.__name__}")
                 get_result = get_trigger_func()
+                print(f"📊 GET请求结果: {get_result}")
                 
                 # 添加GET请求结果到响应中
                 response_data['triggered_get_request'] = {
@@ -79,9 +86,13 @@ class WebhookService:
                 if get_result.get('status') == 'success':
                     response_data['triggered_get_request']['additional_info'] = '数据获取成功，可进行后续处理'
                 
+                print("✅ GET请求触发完成，返回增强响应")
                 return JsonResponse(response_data, status=200)
                 
             except Exception as e:
+                print(f"❌ GET请求触发失败: {str(e)}")
+                print(f"📋 错误详情: {type(e).__name__}: {e}")
+                
                 # GET请求失败不影响原POST响应，但记录错误信息
                 try:
                     response_data = json.loads(response.content.decode('utf-8'))
@@ -91,10 +102,12 @@ class WebhookService:
                 response_data['triggered_get_request'] = {
                     'status': 'error',
                     'message': f'GET请求触发失败: {str(e)}',
-                    'event_type': event_type
+                    'event_type': event_type,
+                    'error_type': type(e).__name__
                 }
                 return JsonResponse(response_data, status=200)
         else:
+            print(f"⚠️ 状态码非200 ({response.status_code})，跳过GET请求触发")
             # POST请求失败，直接返回原响应
             return response
     
