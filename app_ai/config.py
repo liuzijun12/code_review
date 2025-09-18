@@ -1,13 +1,156 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-GitHub数据获取配置
+项目配置管理（GitHub和Ollama）
 """
 
 import os
 import logging
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+
+@dataclass
+class OllamaConfig:
+    """Ollama服务配置"""
+    
+    # 连接配置
+    base_url: str = "http://localhost:11434"
+    timeout: int = 120  # 秒
+    headers: Dict[str, str] = {}
+    
+    # 重试配置
+    max_retries: int = 3
+    retry_delay: float = 1.0  # 秒
+    retry_backoff: float = 2.0
+    retry_status_codes: List[int] = []
+    
+    # 模型配置
+    code_review_model: str = "llama3.1:8b"
+    commit_explain_model: str = "llama3.1:8b"
+    
+    # 提示词配置
+    code_review_prompt: str = '''
+# 专业代码审查请求
+
+## 审查要求
+作为资深代码审查专家，请对以下代码进行全面分析，要求：
+
+1. 代码质量检查：
+- 是否符合PEP8/Pylint等规范
+- 命名是否清晰准确
+- 函数/方法是否单一职责
+
+2. 潜在问题检查：
+- 可能的边界条件错误
+- 线程/并发安全问题
+- 内存泄漏风险
+- SQL注入/XSS等安全漏洞
+
+3. 性能优化：
+- 时间复杂度分析
+- 不必要的计算/IO操作
+- 缓存使用合理性
+
+4. 架构设计：
+- 模块划分合理性
+- 依赖关系清晰度
+- 扩展性评估
+
+5. 改进建议：
+- 具体重构方案
+- 代码片段示例
+- 相关文档/资源链接
+
+## 代码内容
+```
+{code_content}
+```
+
+## 输出格式要求
+请按以下Markdown格式输出：
+```markdown
+### 代码审查报告
+
+**1. 代码质量评估**
+- [优点] ...
+- [问题] ...
+
+**2. 潜在问题**
+- [严重程度] 问题描述...
+
+**3. 优化建议**
+- [优先级] 建议内容...
+```
+'''
+    
+    commit_explain_prompt: str = '''
+# Git提交专业分析请求
+
+## 提交元数据
+- 提交SHA: {commit_sha}
+- 提交信息: {commit_message}
+- 作者: {author_name}
+- 时间: {commit_date}
+- 变更文件数: {files_count}
+- 总变更行数: +{additions}/-{deletions}
+
+## 详细变更
+{files_info}
+
+## 分析要求
+作为技术负责人，请进行以下分析：
+
+1. 变更影响评估：
+- 影响的核心模块
+- 上下游依赖影响
+- 用户感知度
+
+2. 代码质量审查：
+- 变更代码是否符合规范
+- 测试覆盖率评估
+- 文档更新完整性
+
+3. 风险评估：
+- 回滚难度
+- 性能影响
+- 安全考量
+
+4. 改进建议：
+- 代码重构建议
+- 补充测试建议
+- 文档完善建议
+
+## 输出格式
+```markdown
+### 提交分析报告
+
+**1. 变更概述**
+- 主要目的: ...
+- 关键技术点: ...
+
+**2. 影响评估**
+- 模块影响: ...
+- 用户影响: ...
+
+**3. 风险与建议**
+- [高风险] ...
+- [建议] ...
+```
+'''
+    
+    def __post_init__(self):
+        """初始化后处理"""
+        if self.headers is None:
+            self.headers = {
+                'Content-Type': 'application/json',
+                'User-Agent': 'CodeReview-Ollama-Client/1.0'
+            }
+        if self.retry_status_codes is None:
+            self.retry_status_codes = [408, 429, 500, 502, 503, 504]
+        
+        # 从环境变量加载提示词配置
+        self.code_review_prompt = os.getenv('OLLAMA_CODE_REVIEW_PROMPT', self.code_review_prompt)
+        self.commit_explain_prompt = os.getenv('OLLAMA_COMMIT_EXPLAIN_PROMPT', self.commit_explain_prompt)
 
 # 创建logger实例
 logger = logging.getLogger(__name__)
@@ -142,19 +285,35 @@ class RateLimitConfig:
     backoff_on_rate_limit: bool = True  # 触发限制时退避
     respect_retry_after: bool = True    # 遵守Retry-After头
 
-class GitHubConfig:
-    """GitHub配置管理器"""
+class ProjectConfig:
+    """项目配置管理器"""
     
     def __init__(self):
-        logger.info("初始化GitHub配置管理器")
-        self.api_config = self._load_api_config()
-        self.rate_limit_config = self._load_rate_limit_config()
-        logger.info(f"配置加载完成，仓库: {self.get_repository_full_name() if self.is_configured() else '未配置'}")
+        logger.info("初始化项目配置管理器")
+        self.github_config = GitHubApiConfig()
+        self.ollama_config = self._load_ollama_config()
+        logger.info("配置加载完成")
     
-    def _load_api_config(self) -> GitHubApiConfig:
-        """加载API配置"""
-        logger.debug("加载GitHub API配置")
-        return GitHubApiConfig(
+    def _load_ollama_config(self) -> OllamaConfig:
+        """加载Ollama配置"""
+        logger.debug("加载Ollama配置")
+        return OllamaConfig(
+            base_url=os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434'),
+            timeout=int(os.getenv('OLLAMA_TIMEOUT', '120')),
+            max_retries=int(os.getenv('OLLAMA_MAX_RETRIES', '3')),
+            retry_delay=float(os.getenv('OLLAMA_RETRY_DELAY', '1.0')),
+            retry_backoff=float(os.getenv('OLLAMA_RETRY_BACKOFF', '2.0')),
+            code_review_model=os.getenv('OLLAMA_CODE_REVIEW_MODEL', 'llama3.1:8b'),
+            commit_explain_model=os.getenv('OLLAMA_COMMIT_EXPLAIN_MODEL', 'llama3.1:8b')
+        )
+
+# 全局配置实例
+project_config = ProjectConfig()
+
+def _load_api_config(self) -> GitHubApiConfig:
+    """加载API配置"""
+    logger.debug("加载GitHub API配置")
+    return GitHubApiConfig(
             # 从环境变量加载基础配置
             token=os.getenv('GITHUB_TOKEN', ''),
             repo_owner=os.getenv('REPO_OWNER', ''),
@@ -298,5 +457,5 @@ class GitHubConfig:
             }
         }
 
-# 全局配置实例
-github_config = GitHubConfig()
+# 兼容旧名称
+github_config = project_config.github_config

@@ -14,10 +14,6 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 
-# 使用pymysql替代MySQLdb
-import pymysql
-pymysql.install_as_MySQLdb()
-
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -48,7 +44,6 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'app_ai',
 ]
 
 MIDDLEWARE = [
@@ -143,3 +138,116 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ===== Django Admin 配置 =====
 # 可以在这里添加原生 Django admin 的自定义配置
+
+# ===== Ollama 提示词配置 =====
+# 注意：连接和模型配置已迁移到app_ai/config.py
+
+# 提示词模板配置
+OLLAMA_CODE_REVIEW_PROMPT = os.getenv('OLLAMA_CODE_REVIEW_PROMPT', '''
+# 专业代码审查请求
+
+## 审查要求
+作为资深代码审查专家，请对以下代码进行全面分析，要求：
+
+1. 代码质量检查：
+- 是否符合PEP8/Pylint等规范
+- 命名是否清晰准确
+- 函数/方法是否单一职责
+
+2. 潜在问题检查：
+- 可能的边界条件错误
+- 线程/并发安全问题
+- 内存泄漏风险
+- SQL注入/XSS等安全漏洞
+
+3. 性能优化：
+- 时间复杂度分析
+- 不必要的计算/IO操作
+- 缓存使用合理性
+
+4. 架构设计：
+- 模块划分合理性
+- 依赖关系清晰度
+- 扩展性评估
+
+5. 改进建议：
+- 具体重构方案
+- 代码片段示例
+- 相关文档/资源链接
+
+## 代码内容
+```
+{code_content}
+```
+
+## 输出格式要求
+请按以下Markdown格式输出：
+```markdown
+### 代码审查报告
+
+**1. 代码质量评估**
+- [优点] ...
+- [问题] ...
+
+**2. 潜在问题**
+- [严重程度] 问题描述...
+
+**3. 优化建议**
+- [优先级] 建议内容...
+```
+''')
+
+OLLAMA_COMMIT_EXPLAIN_PROMPT = os.getenv('OLLAMA_COMMIT_EXPLAIN_PROMPT', '''
+# Git提交专业分析请求
+
+## 提交元数据
+- 提交SHA: {commit_sha}
+- 提交信息: {commit_message}
+- 作者: {author_name}
+- 时间: {commit_date}
+- 变更文件数: {files_count}
+- 总变更行数: +{additions}/-{deletions}
+
+## 详细变更
+{files_info}
+
+## 分析要求
+作为技术负责人，请进行以下分析：
+
+1. 变更影响评估：
+- 影响的核心模块
+- 上下游依赖影响
+- 用户感知度
+
+2. 代码质量审查：
+- 变更代码是否符合规范
+- 测试覆盖率评估
+- 文档更新完整性
+
+3. 风险评估：
+- 回滚难度
+- 性能影响
+- 安全考量
+
+4. 改进建议：
+- 代码重构建议
+- 补充测试建议
+- 文档完善建议
+
+## 输出格式
+```markdown
+### 提交分析报告
+
+**1. 变更概述**
+- 主要目的: ...
+- 关键技术点: ...
+
+**2. 影响评估**
+- 模块影响: ...
+- 用户影响: ...
+
+**3. 风险与建议**
+- [高风险] ...
+- [建议] ...
+```
+''')

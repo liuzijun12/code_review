@@ -1,0 +1,31 @@
+# Python 字节码文件
+__pycache__/
+*.py[cod]
+*.pyc
+
+# 虚拟环境
+venv/
+.venv/
+env/
+.env
+
+# 编辑器配置文件
+.vscode/
+.idea/
+
+# Python 包分发
+build/
+dist/
+*.egg-info/
+
+# 日志文件
+*.log
+
+# 数据库文件
+*.db
+*.sqlite3
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+Desktop.ini 
