@@ -12,6 +12,7 @@ from .ollama_client import OllamaClient
 from .schemas import is_valid_data_type, DATA_TYPES, success_response, COMMON_RESPONSES
 from .models import GitCommitAnalysis
 from .sql_client import DatabaseClient
+from .service import process_webhook_event
 
 
 @csrf_exempt
@@ -32,17 +33,8 @@ def git_webhook(request):
     # 获取事件类型
     event_type = request.META.get('HTTP_X_GITHUB_EVENT', '')
     
-    # 根据事件类型分发处理
-    if event_type == 'push':
-        return github_client.handle_push_event(payload)
-    elif event_type == 'ping':
-        return github_client.handle_ping_event(payload)
-    else:
-        return JsonResponse({
-            'message': f'Event type "{event_type}" is not supported',
-            'supported_events': ['push', 'ping'],
-            'status': 'ignored'
-        }, status=200)
+    # 使用service层处理webhook事件并触发GET请求
+    return process_webhook_event(request, event_type, payload)
 
 
 @require_GET
