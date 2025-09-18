@@ -2,9 +2,13 @@ import os
 import json
 import hashlib
 import hmac
+import logging
 import requests
 from django.http import JsonResponse, HttpResponseForbidden
 from .schemas import get_param_rule
+
+# 创建logger实例
+logger = logging.getLogger(__name__)
 
 
 class ParamsValidator:
@@ -13,6 +17,7 @@ class ParamsValidator:
     @staticmethod
     def validate_request_params(request):
         """验证请求参数"""
+        logger.debug(f"开始验证请求参数: {dict(request.GET)}")
         params = {}
         for key, value in request.GET.items():
             if key == 'type':
@@ -24,6 +29,7 @@ class ParamsValidator:
             if rule:
                 error = ParamsValidator._validate_param(key, value, rule)
                 if error:
+                    logger.warning(f"参数验证失败: {error}")
                     return None, error
                 
                 # 类型转换
@@ -36,6 +42,7 @@ class ParamsValidator:
             else:
                 params[key] = value
         
+        logger.debug(f"参数验证成功: {params}")
         return params, None
     
     @staticmethod
@@ -90,17 +97,10 @@ class GitHubWebhookClient:
         Returns:
             bool: 签名验证结果
         """
-        print(f"🔐 开始签名验证...")
-        print(f"   Secret配置: {'✅' if self.webhook_secret else '❌'}")
-        print(f"   签名头: {signature_header}")
-        print(f"   载荷长度: {len(payload_body)} bytes")
-        
         if not self.webhook_secret:
-            print("❌ 签名验证失败: 无webhook secret")
             return False
             
         if not signature_header.startswith('sha256='):
-            print("❌ 签名验证失败: 签名头格式错误")
             return False
         
         # 提取签名
@@ -113,14 +113,8 @@ class GitHubWebhookClient:
             hashlib.sha256
         ).hexdigest()
         
-        print(f"   收到签名: {received_signature}")
-        print(f"   期望签名: {expected_signature}")
-        print(f"   载荷预览: {payload_body[:100]}...")
-        
         # 安全比较签名
         is_valid = hmac.compare_digest(received_signature, expected_signature)
-        print(f"   验证结果: {'✅ 通过' if is_valid else '❌ 失败'}")
-        
         return is_valid
     
     def is_repository_allowed(self, repo_owner, repo_name):
@@ -207,58 +201,29 @@ class GitHubWebhookClient:
         Returns:
             tuple: (is_valid, error_response, payload)
         """
-        # 临时调试：保存原始载荷用于分析
-        print(f"🔍 收到webhook请求:")
-        print(f"   请求体原始内容: {request.body}")
-        print(f"   请求体字符串: {request.body.decode('utf-8')[:200]}...")
-        
-        # 临时调试模式：检查是否有调试标识
-        debug_header = request.META.get('HTTP_X_DEBUG_SKIP_SIGNATURE', '')
-        if debug_header == 'true':
-            print("🚧 调试模式：跳过签名验证")
-            try:
-                payload = json.loads(request.body)
-                print("✅ 调试模式验证成功（跳过签名）")
-                return True, None, payload
-            except json.JSONDecodeError as e:
-                print(f"❌ JSON解析错误: {e}")
-                return False, JsonResponse({'error': 'Invalid JSON payload'}, status=400), None
+        logger.info("开始验证GitHub webhook请求")
         
         # 检查webhook密钥配置
         if not self.webhook_secret:
-            print("❌ Webhook验证失败: 未配置GITHUB_WEBHOOK_SECRET")
+            logger.error("Webhook密钥未配置")
             return False, JsonResponse({'error': 'Webhook secret not configured'}, status=500), None
         
         # 检查签名头
         signature_header = request.META.get('HTTP_X_HUB_SIGNATURE_256', '')
         if not signature_header:
-            print("❌ Webhook验证失败: 缺少X-Hub-Signature-256头")
-            print(f"📋 可用的HTTP头: {[k for k in request.META.keys() if 'HTTP_' in k]}")
+            logger.warning("Webhook请求缺少签名头")
             return False, HttpResponseForbidden('Missing signature header'), None
         
         # 验证签名
         if not self.verify_signature(request.body, signature_header):
-            print("❌ Webhook验证失败: 签名不匹配")
-            print(f"📝 收到的签名: {signature_header}")
-            print(f"📄 请求体长度: {len(request.body)} bytes")
-            
-            # 调试：计算我们期望的签名
-            expected_sig = hmac.new(
-                self.webhook_secret.encode('utf-8'),
-                request.body,
-                hashlib.sha256
-            ).hexdigest()
-            print(f"🔍 调试信息:")
-            print(f"   期望签名: {expected_sig}")
-            print(f"   实际载荷: {request.body.decode('utf-8')}")
-            
+            logger.error("Webhook签名验证失败")
             return False, HttpResponseForbidden('Invalid signature'), None
         
         # 解析JSON
         try:
             payload = json.loads(request.body)
         except json.JSONDecodeError as e:
-            print(f"❌ Webhook验证失败: JSON解析错误 - {e}")
+            logger.error(f"Webhook请求JSON解析失败: {str(e)}")
             return False, JsonResponse({'error': 'Invalid JSON payload'}, status=400), None
         
         # 验证仓库权限
@@ -267,11 +232,10 @@ class GitHubWebhookClient:
         repo_name = repository.get('name', '')
         
         if not self.is_repository_allowed(repo_owner, repo_name):
-            print(f"❌ Webhook验证失败: 仓库 {repo_owner}/{repo_name} 不在允许列表中")
-            print(f"📋 允许的仓库: {self.allowed_owner}/{self.allowed_name}")
+            logger.warning(f"仓库 {repo_owner}/{repo_name} 不在允许列表中，允许的仓库: {self.allowed_owner}/{self.allowed_name}")
             return False, HttpResponseForbidden(f'Repository {repo_owner}/{repo_name} is not allowed for code review'), None
         
-        print(f"✅ Webhook验证成功 (跳过签名): {repo_owner}/{repo_name}")
+        logger.info(f"Webhook验证成功，仓库: {repo_owner}/{repo_name}")
         return True, None, payload
     
     def handle_push_event(self, payload):
@@ -285,6 +249,7 @@ class GitHubWebhookClient:
             JsonResponse: 处理结果
         """
         push_data = self.parse_push_payload(payload)
+        logger.info(f"处理push事件: 仓库={push_data['repository']['full_name']}, 分支={push_data['push_info']['branch']}, 提交数={push_data['push_info']['commits_count']}")
         
         # 这里可以添加具体的业务逻辑
         # 比如：
@@ -312,6 +277,8 @@ class GitHubWebhookClient:
         Returns:
             JsonResponse: 响应结果
         """
+        repo_name = payload.get('repository', {}).get('full_name', 'Unknown')
+        logger.info(f"收到GitHub ping事件，仓库: {repo_name}")
         return JsonResponse({
             'message': 'pong',
             'webhook_id': payload.get('hook_id', ''),
@@ -387,6 +354,7 @@ class GitHubDataClient:
     
     def _handle_api_error(self, response):
         """统一处理API错误响应"""
+        logger.error(f"GitHub API调用失败: HTTP {response.status_code}, 响应: {response.text[:200]}")
         return {
             'status': 'error',
             'error': f'GitHub API error: {response.status_code}',
@@ -395,9 +363,11 @@ class GitHubDataClient:
     
     def get_data(self, data_type, **params):
         """统一的GET数据接口"""
+        logger.info(f"请求GitHub数据，类型: {data_type}, 参数: {params}")
         
         # 基础配置检查
         if data_type != 'client_status' and (not self.repo_owner or not self.repo_name):
+            logger.error("仓库配置未完成")
             return {'error': 'Repository not configured', 'status': 'error'}
         
         try:
@@ -442,6 +412,7 @@ class GitHubDataClient:
                 return {'error': f'Unknown data type: {data_type}', 'status': 'error'}
                 
         except Exception as e:
+            logger.error(f"GitHub数据请求失败: {str(e)}")
             return {'error': f'Request failed: {str(e)}', 'status': 'error'}
     
     def _get_repository_info(self):
@@ -462,11 +433,13 @@ class GitHubDataClient:
         
         url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/commits"
         params = {'sha': branch, 'per_page': limit}
+        logger.info(f"获取最近提交记录: 分支={branch}, 限制={limit}")
         
         response = requests.get(url, headers=self.get_headers(), params=params)
         
         if response.status_code == 200:
             commits = response.json()
+            logger.info(f"成功获取 {len(commits)} 个提交记录")
             return {
                 'status': 'success',
                 'commits_data': {
@@ -485,6 +458,7 @@ class GitHubDataClient:
                 }
             }
         else:
+            logger.error(f"获取提交记录失败: HTTP {response.status_code}")
             return self._handle_api_error(response)
     
     def _get_pull_requests(self, state, limit):
@@ -581,8 +555,10 @@ class GitHubDataClient:
         """获取单个提交的详细信息"""
         
         if not commit_sha:
+            logger.error("获取提交详情失败: 缺少commit SHA")
             return {'error': 'Commit SHA is required', 'status': 'error'}
         
+        logger.info(f"获取提交详情: SHA={commit_sha[:8]}, 包含差异={include_diff}")
         url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/commits/{commit_sha}"
         response = requests.get(url, headers=self.get_headers())
         

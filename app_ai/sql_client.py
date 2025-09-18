@@ -3,10 +3,14 @@
 封装所有与数据库相关的操作
 """
 
+import logging
 from django.utils.dateparse import parse_datetime
 from django.db import transaction
 from .models import GitCommitAnalysis
 from .schemas import format_commit_for_database
+
+# 创建logger实例
+logger = logging.getLogger(__name__)
 
 
 class DatabaseClient:
@@ -26,10 +30,12 @@ class DatabaseClient:
         try:
             # 使用schemas中的格式转换函数
             db_data = format_commit_for_database(github_commit_data)
+            logger.info(f"开始保存提交到数据库: SHA={db_data['commit_sha'][:8]}, 作者={db_data['author_name']}")
             
             # 解析时间字符串为Django的datetime对象
             commit_timestamp = parse_datetime(db_data['commit_timestamp'])
             if not commit_timestamp:
+                logger.error(f"时间格式解析失败: {db_data['commit_timestamp']}")
                 return False, f"无效的时间格式: {db_data['commit_timestamp']}", None
             
             # 使用get_or_create避免重复插入
@@ -45,11 +51,14 @@ class DatabaseClient:
             )
             
             if created:
+                logger.info(f"新提交已保存到数据库: {commit_obj.commit_sha[:8]}")
                 return True, f"新提交已保存: {commit_obj.commit_sha[:8]}", commit_obj
             else:
+                logger.debug(f"提交已存在于数据库: {commit_obj.commit_sha[:8]}")
                 return True, f"提交已存在: {commit_obj.commit_sha[:8]}", commit_obj
                 
         except Exception as e:
+            logger.error(f"数据库保存失败: {str(e)}")
             return False, f"数据库保存失败: {str(e)}", None
     
     @staticmethod
@@ -64,10 +73,12 @@ class DatabaseClient:
         Returns:
             tuple: (success: bool, data: dict, error: str or None)
         """
+        logger.info(f"查询保存的提交记录: limit={limit}, offset={offset}")
         try:
             # 查询数据库
             total_count = GitCommitAnalysis.objects.count()
             commits = GitCommitAnalysis.objects.all()[offset:offset+limit]
+            logger.info(f"成功查询到 {len(commits)} 条提交记录，总计 {total_count} 条")
             
             # 格式化返回数据
             commit_list = []
@@ -95,6 +106,7 @@ class DatabaseClient:
             }, None
             
         except Exception as e:
+            logger.error(f"查询数据库失败: {str(e)}")
             return False, None, f"查询数据库失败: {str(e)}"
     
     @staticmethod
@@ -108,14 +120,19 @@ class DatabaseClient:
         Returns:
             tuple: (success: bool, commit_obj: GitCommitAnalysis or None, error: str or None)
         """
+        logger.info(f"根据SHA查询提交: {commit_sha}")
         try:
             commit = GitCommitAnalysis.objects.get(commit_sha__startswith=commit_sha)
+            logger.info(f"成功找到提交: {commit.commit_sha[:8]}")
             return True, commit, None
         except GitCommitAnalysis.DoesNotExist:
+            logger.warning(f"未找到SHA开头为 '{commit_sha}' 的提交")
             return False, None, f"未找到SHA开头为 '{commit_sha}' 的提交"
         except GitCommitAnalysis.MultipleObjectsReturned:
+            logger.warning(f"找到多个SHA开头为 '{commit_sha}' 的提交")
             return False, None, f"找到多个SHA开头为 '{commit_sha}' 的提交，请提供更多字符"
         except Exception as e:
+            logger.error(f"查询提交失败: {str(e)}")
             return False, None, f"查询失败: {str(e)}"
     
     @staticmethod
@@ -130,14 +147,18 @@ class DatabaseClient:
         Returns:
             tuple: (success: bool, message: str)
         """
+        logger.info(f"更新提交分析建议: {commit_sha[:8]}")
         try:
             commit = GitCommitAnalysis.objects.get(commit_sha=commit_sha)
             commit.analysis_suggestion = analysis_suggestion
             commit.save()
+            logger.info(f"成功更新提交 {commit_sha[:8]} 的分析建议")
             return True, f"已更新提交 {commit_sha[:8]} 的分析建议"
         except GitCommitAnalysis.DoesNotExist:
+            logger.warning(f"更新失败: 未找到SHA为 '{commit_sha}' 的提交")
             return False, f"未找到SHA为 '{commit_sha}' 的提交"
         except Exception as e:
+            logger.error(f"更新提交分析失败: {str(e)}")
             return False, f"更新失败: {str(e)}"
     
     @staticmethod
@@ -151,13 +172,17 @@ class DatabaseClient:
         Returns:
             tuple: (success: bool, message: str)
         """
+        logger.info(f"删除提交记录: {commit_sha[:8]}")
         try:
             commit = GitCommitAnalysis.objects.get(commit_sha=commit_sha)
             commit.delete()
+            logger.info(f"成功删除提交 {commit_sha[:8]}")
             return True, f"已删除提交 {commit_sha[:8]}"
         except GitCommitAnalysis.DoesNotExist:
+            logger.warning(f"删除失败: 未找到SHA为 '{commit_sha}' 的提交")
             return False, f"未找到SHA为 '{commit_sha}' 的提交"
         except Exception as e:
+            logger.error(f"删除提交失败: {str(e)}")
             return False, f"删除失败: {str(e)}"
     
     @staticmethod
@@ -172,10 +197,12 @@ class DatabaseClient:
         Returns:
             tuple: (success: bool, commits: list, error: str or None)
         """
+        logger.info(f"根据作者查询提交记录: 作者={author_name}, 限制={limit}")
         try:
             commits = GitCommitAnalysis.objects.filter(
                 author_name__icontains=author_name
             ).order_by('-commit_timestamp')[:limit]
+            logger.info(f"找到 {len(commits)} 个作者 '{author_name}' 的提交记录")
             
             commit_list = []
             for commit in commits:
@@ -191,6 +218,7 @@ class DatabaseClient:
             return True, commit_list, None
             
         except Exception as e:
+            logger.error(f"根据作者查询提交失败: {str(e)}")
             return False, [], f"查询失败: {str(e)}"
     
     @staticmethod
@@ -201,11 +229,13 @@ class DatabaseClient:
         Returns:
             dict: 统计信息
         """
+        logger.info("获取数据库统计信息")
         try:
             total_commits = GitCommitAnalysis.objects.count()
             analyzed_commits = GitCommitAnalysis.objects.filter(
                 analysis_suggestion__isnull=False
             ).exclude(analysis_suggestion='').count()
+            logger.info(f"统计信息: 总提交数={total_commits}, 已分析={analyzed_commits}")
             
             # 获取最近的提交
             latest_commit = GitCommitAnalysis.objects.first()
@@ -230,6 +260,7 @@ class DatabaseClient:
             }
             
         except Exception as e:
+            logger.error(f"获取统计信息失败: {str(e)}")
             return {
                 'error': f"获取统计信息失败: {str(e)}"
             }
@@ -245,6 +276,7 @@ class DatabaseClient:
         Returns:
             tuple: (success_count: int, error_count: int, messages: list)
         """
+        logger.info(f"开始批量保存 {len(github_commits_data)} 个提交")
         success_count = 0
         error_count = 0
         messages = []
@@ -257,6 +289,7 @@ class DatabaseClient:
                 error_count += 1
             messages.append(message)
         
+        logger.info(f"批量保存完成: 成功={success_count}, 失败={error_count}")
         return success_count, error_count, messages
     
     @staticmethod
@@ -271,12 +304,14 @@ class DatabaseClient:
         Returns:
             tuple: (success: bool, commits: list, error: str or None)
         """
+        logger.info(f"搜索提交记录: 关键词='{query}', 限制={limit}")
         try:
             from django.db.models import Q
             
             commits = GitCommitAnalysis.objects.filter(
                 Q(commit_message__icontains=query) | Q(author_name__icontains=query)
             ).order_by('-commit_timestamp')[:limit]
+            logger.info(f"搜索到 {len(commits)} 个匹配的提交记录")
             
             commit_list = []
             for commit in commits:
@@ -293,4 +328,5 @@ class DatabaseClient:
             return True, commit_list, None
             
         except Exception as e:
+            logger.error(f"搜索提交记录失败: {str(e)}")
             return False, [], f"搜索失败: {str(e)}"
