@@ -117,20 +117,24 @@ class WebhookService:
             return response
     
     def _trigger_recent_commits_get(self):
-        """触发获取最近提交的GET请求，并保存到数据库"""
-        logger.info("触发recent_commits GET请求并保存到数据库")
+        """触发获取最近提交的GET请求，保存到数据库，并自动执行AI分析"""
+        logger.info("触发recent_commits GET请求，数据库保存和AI分析")
         
         # 获取recent_commits数据
         result = self.data_client.get_data('recent_commits', branch='main', limit=5)
         
         if result.get('status') == 'success':
             try:
-                # 添加数据库保存逻辑（类似views.py中的逻辑）
+                # 添加数据库保存和AI分析逻辑
                 if 'commits_data' in result and 'commits' in result['commits_data']:
                     commits = result['commits_data']['commits']
                     saved_count = 0
+                    analyzed_count = 0
                     
-                    logger.info(f"开始保存 {len(commits)} 个提交到数据库")
+                    logger.info(f"开始处理 {len(commits)} 个提交：保存到数据库并执行AI分析")
+                    
+                    # 导入AI分析服务
+                    from .ai_analysis_service import ai_analysis_service
                     
                     for commit in commits:
                         try:
@@ -163,8 +167,35 @@ class WebhookService:
                                     'parents': commit_detail.get('parents', []),
                                     'patch': commit_detail.get('raw_patch', '')
                                 }
+                                
+                                # 🤖 执行AI分析
+                                logger.info(f"开始AI分析提交: {commit['sha'][:8]}")
+                                ai_analysis_result = ai_analysis_service.analyze_commit_data(github_data)
+                                
+                                # 保存到数据库（包含AI分析结果）
+                                from .sql_client import DatabaseClient
+                                if ai_analysis_result.get('status') == 'success':
+                                    success, message, _ = DatabaseClient.save_commit_with_ai_analysis(
+                                        github_data, ai_analysis_result
+                                    )
+                                    if success:
+                                        saved_count += 1
+                                        analyzed_count += 1
+                                        logger.info(f"✅ 提交保存+AI分析完成: {commit['sha'][:8]} - {message}")
+                                    else:
+                                        logger.warning(f"❌ 提交保存失败: {commit['sha'][:8]} - {message}")
+                                else:
+                                    # AI分析失败，但仍然保存基本数据
+                                    success, message, _ = DatabaseClient.save_commit_to_database(github_data)
+                                    if success:
+                                        saved_count += 1
+                                        logger.warning(f"⚠️ 提交已保存但AI分析失败: {commit['sha'][:8]} - AI错误: {ai_analysis_result.get('error', 'Unknown')}")
+                                    else:
+                                        logger.error(f"❌ 提交保存失败: {commit['sha'][:8]} - {message}")
+                                
                             else:
                                 # 如果获取详细信息失败，使用简化版本
+                                logger.warning(f"获取提交详情失败，使用简化数据: {commit['sha'][:8]}")
                                 github_data = {
                                     'sha': commit['sha'],
                                     'commit': {
@@ -186,36 +217,40 @@ class WebhookService:
                                     'parents': [],
                                     'patch': ''
                                 }
-                            
-                            # 保存到数据库
-                            from .sql_client import DatabaseClient
-                            success, message, _ = DatabaseClient.save_commit_to_database(github_data)
-                            if success:
-                                saved_count += 1
-                                logger.info(f"保存提交成功: {commit['sha'][:8]} - {message}")
-                            else:
-                                logger.warning(f"保存提交失败: {commit['sha'][:8]} - {message}")
+                                
+                                # 保存基本数据（无AI分析）
+                                from .sql_client import DatabaseClient
+                                success, message, _ = DatabaseClient.save_commit_to_database(github_data)
+                                if success:
+                                    saved_count += 1
+                                    logger.info(f"✅ 基本提交数据已保存: {commit['sha'][:8]} - {message}")
+                                else:
+                                    logger.error(f"❌ 基本提交保存失败: {commit['sha'][:8]} - {message}")
                                 
                         except Exception as commit_error:
-                            logger.error(f"处理提交 {commit['sha'][:8]} 时出错: {commit_error}")
+                            logger.error(f"❌ 处理提交 {commit['sha'][:8]} 时出错: {commit_error}")
                             continue
                     
-                    # 在结果中添加数据库保存状态
+                    # 在结果中添加数据库保存和AI分析状态
                     result['database_save'] = {
                         'success': True,
-                        'message': f'Webhook触发：批量保存完成，成功保存 {saved_count}/{len(commits)} 个提交',
+                        'message': f'Webhook触发：批量处理完成，保存 {saved_count}/{len(commits)} 个提交，AI分析 {analyzed_count} 个',
                         'saved_count': saved_count,
-                        'total_count': len(commits)
+                        'analyzed_count': analyzed_count,
+                        'total_count': len(commits),
+                        'ai_analysis_enabled': True
                     }
                     
-                    logger.info(f"数据库保存完成：{saved_count}/{len(commits)} 个提交")
+                    logger.info(f"📊 批量处理完成：保存 {saved_count}/{len(commits)} 个提交，AI分析 {analyzed_count} 个")
                     
             except Exception as e:
-                logger.error(f"数据库保存过程出错: {e}")
+                logger.error(f"❌ 数据库保存和AI分析过程出错: {e}")
                 result['database_save'] = {
                     'success': False,
-                    'message': f'Webhook触发：数据库保存失败: {str(e)}',
-                    'saved_count': 0
+                    'message': f'Webhook触发：处理失败: {str(e)}',
+                    'saved_count': 0,
+                    'analyzed_count': 0,
+                    'ai_analysis_enabled': True
                 }
         
         return result

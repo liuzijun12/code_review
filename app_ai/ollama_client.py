@@ -1,13 +1,20 @@
 import os
 import json
 import requests
+import time
+import logging
 from typing import Dict, List, Optional, Any
 from django.conf import settings
+from .config import ollama_config
+
+# 创建logger实例
+logger = logging.getLogger(__name__)
 
 
 class OllamaClient:
     """
     Ollama客户端，用于连接本地Docker中的Ollama服务
+    集成配置管理、重试机制、错误处理等功能
     """
     
     def __init__(self, base_url: str = None):
@@ -15,19 +22,83 @@ class OllamaClient:
         初始化Ollama客户端
         
         Args:
-            base_url: Ollama服务的基础URL，默认从环境变量获取
+            base_url: Ollama服务的基础URL，默认从配置获取
         """
-        self.base_url = base_url or os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
+        # 获取配置
+        self.config = ollama_config.get_config()
+        
+        # 设置基础URL
+        self.base_url = base_url or self.config.base_url
         self.base_url = self.base_url.rstrip('/')  # 移除末尾的斜杠
         
-        # 请求超时设置
-        self.timeout = 120  # 120秒超时，AI推理需要更长时间
+        # 超时设置
+        self.connection_timeout = self.config.connection_timeout
+        self.request_timeout = self.config.request_timeout
+        self.model_pull_timeout = self.config.model_pull_timeout
+        
+        # 重试配置
+        self.max_retries = self.config.max_retries
+        self.retry_delay = self.config.retry_delay
+        self.retry_backoff_factor = self.config.retry_backoff_factor
         
         # 请求头
         self.headers = {
             'Content-Type': 'application/json',
-            'User-Agent': 'CodeReview-Ollama-Client/1.0'
+            'User-Agent': 'CodeReview-Ollama-Client/2.0'
         }
+        
+        # 初始化日志
+        if self.config.debug_mode:
+            logger.info(f"初始化Ollama客户端: {self.base_url}")
+            logger.debug(f"配置: {ollama_config.to_dict()}")
+    
+    def _make_request_with_retry(self, method: str, url: str, timeout: int = None, **kwargs) -> requests.Response:
+        """
+        带重试机制的请求方法
+        
+        Args:
+            method: HTTP方法
+            url: 请求URL
+            timeout: 超时时间
+            **kwargs: 其他请求参数
+            
+        Returns:
+            requests.Response: 响应对象
+            
+        Raises:
+            requests.RequestException: 请求失败
+        """
+        timeout = timeout or self.request_timeout
+        last_exception = None
+        
+        for attempt in range(self.max_retries + 1):
+            try:
+                if self.config.log_requests:
+                    logger.debug(f"发送请求: {method} {url} (尝试 {attempt + 1}/{self.max_retries + 1})")
+                
+                response = requests.request(
+                    method=method,
+                    url=url,
+                    headers=self.headers,
+                    timeout=timeout,
+                    **kwargs
+                )
+                
+                if self.config.log_requests:
+                    logger.debug(f"响应状态: {response.status_code}")
+                
+                return response
+                
+            except requests.exceptions.RequestException as e:
+                last_exception = e
+                if attempt < self.max_retries:
+                    delay = self.retry_delay * (self.retry_backoff_factor ** attempt)
+                    logger.warning(f"请求失败 (尝试 {attempt + 1}/{self.max_retries + 1}): {e}, {delay:.1f}秒后重试")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"请求最终失败: {e}")
+        
+        raise last_exception
     
     def check_connection(self) -> Dict[str, Any]:
         """
@@ -37,34 +108,49 @@ class OllamaClient:
             dict: 连接状态信息
         """
         try:
-            response = requests.get(
-                f"{self.base_url}/api/tags",
-                headers=self.headers,
-                timeout=5
+            response = self._make_request_with_retry(
+                method='GET',
+                url=f"{self.base_url}/api/tags",
+                timeout=self.connection_timeout
             )
             
             if response.status_code == 200:
                 models = response.json().get('models', [])
-                return {
+                result = {
                     'status': 'connected',
                     'base_url': self.base_url,
                     'available_models': [model['name'] for model in models],
                     'models_count': len(models),
-                    'connection_test': 'success'
+                    'connection_test': 'success',
+                    'config_loaded': True,
+                    'default_models': {
+                        'chat': self.config.default_chat_model,
+                        'code_review': self.config.default_code_review_model,
+                        'commit_analysis': self.config.default_commit_analysis_model
+                    }
                 }
+                
+                if self.config.debug_mode:
+                    logger.info(f"Ollama连接成功，发现 {len(models)} 个模型")
+                
+                return result
             else:
+                error_msg = f'HTTP {response.status_code}: {response.text}'
+                logger.error(f"Ollama连接失败: {error_msg}")
                 return {
                     'status': 'error',
                     'base_url': self.base_url,
-                    'error': f'HTTP {response.status_code}: {response.text}',
+                    'error': error_msg,
                     'connection_test': 'failed'
                 }
                 
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.ConnectionError as e:
+            error_msg = 'Cannot connect to Ollama service. Please check if Docker container is running.'
+            logger.error(f"Ollama连接错误: {e}")
             return {
                 'status': 'disconnected',
                 'base_url': self.base_url,
-                'error': 'Cannot connect to Ollama service. Please check if Docker container is running.',
+                'error': error_msg,
                 'connection_test': 'failed',
                 'troubleshooting': [
                     'Check if Docker is running: docker ps',
@@ -73,18 +159,22 @@ class OllamaClient:
                     'Check container logs: docker-compose logs ollama'
                 ]
             }
-        except requests.exceptions.Timeout:
+        except requests.exceptions.Timeout as e:
+            error_msg = 'Connection timeout. Ollama service might be starting up.'
+            logger.warning(f"Ollama连接超时: {e}")
             return {
                 'status': 'timeout',
                 'base_url': self.base_url,
-                'error': 'Connection timeout. Ollama service might be starting up.',
+                'error': error_msg,
                 'connection_test': 'failed'
             }
         except Exception as e:
+            error_msg = f'Unexpected error: {str(e)}'
+            logger.error(f"Ollama连接异常: {e}")
             return {
                 'status': 'error',
                 'base_url': self.base_url,
-                'error': f'Unexpected error: {str(e)}',
+                'error': error_msg,
                 'connection_test': 'failed'
             }
     
@@ -96,10 +186,9 @@ class OllamaClient:
             dict: 模型列表信息
         """
         try:
-            response = requests.get(
-                f"{self.base_url}/api/tags",
-                headers=self.headers,
-                timeout=self.timeout
+            response = self._make_request_with_retry(
+                method='GET',
+                url=f"{self.base_url}/api/tags"
             )
             
             if response.status_code == 200:
@@ -108,30 +197,48 @@ class OllamaClient:
                 
                 model_details = []
                 for model in models:
-                    model_details.append({
+                    model_info = {
                         'name': model.get('name', ''),
                         'size': model.get('size', 0),
                         'digest': model.get('digest', ''),
                         'modified_at': model.get('modified_at', ''),
-                        'details': model.get('details', {})
-                    })
+                        'details': model.get('details', {}),
+                        'is_default_chat': model.get('name', '') == self.config.default_chat_model,
+                        'is_default_code_review': model.get('name', '') == self.config.default_code_review_model,
+                        'is_default_commit_analysis': model.get('name', '') == self.config.default_commit_analysis_model,
+                    }
+                    model_details.append(model_info)
                 
-                return {
+                result = {
                     'status': 'success',
                     'models': model_details,
-                    'models_count': len(model_details)
+                    'models_count': len(model_details),
+                    'default_models': {
+                        'chat': self.config.default_chat_model,
+                        'code_review': self.config.default_code_review_model,
+                        'commit_analysis': self.config.default_commit_analysis_model
+                    }
                 }
+                
+                if self.config.debug_mode:
+                    logger.info(f"获取到 {len(model_details)} 个模型")
+                
+                return result
             else:
+                error_msg = f'Failed to fetch models: HTTP {response.status_code}'
+                logger.error(error_msg)
                 return {
                     'status': 'error',
-                    'error': f'Failed to fetch models: HTTP {response.status_code}',
+                    'error': error_msg,
                     'message': response.text
                 }
                 
         except Exception as e:
+            error_msg = f'Failed to list models: {str(e)}'
+            logger.error(error_msg)
             return {
                 'status': 'error',
-                'error': f'Failed to list models: {str(e)}'
+                'error': error_msg
             }
     
     def pull_model(self, model_name: str) -> Dict[str, Any]:
@@ -147,52 +254,97 @@ class OllamaClient:
         try:
             payload = {'name': model_name}
             
-            response = requests.post(
-                f"{self.base_url}/api/pull",
-                headers=self.headers,
+            logger.info(f"开始拉取模型: {model_name}")
+            
+            response = self._make_request_with_retry(
+                method='POST',
+                url=f"{self.base_url}/api/pull",
                 json=payload,
-                timeout=300  # 5分钟超时，拉取模型可能需要较长时间
+                timeout=self.model_pull_timeout
             )
             
             if response.status_code == 200:
+                logger.info(f"模型拉取成功: {model_name}")
                 return {
                     'status': 'success',
                     'message': f'Model {model_name} pulled successfully',
                     'model_name': model_name
                 }
             else:
+                error_msg = f'Failed to pull model: HTTP {response.status_code}'
+                logger.error(f"模型拉取失败: {model_name} - {error_msg}")
                 return {
                     'status': 'error',
-                    'error': f'Failed to pull model: HTTP {response.status_code}',
+                    'error': error_msg,
                     'message': response.text,
                     'model_name': model_name
                 }
                 
-        except requests.exceptions.Timeout:
+        except requests.exceptions.Timeout as e:
+            error_msg = 'Model pull timeout. The operation might still be running in background.'
+            logger.warning(f"模型拉取超时: {model_name}")
             return {
                 'status': 'timeout',
-                'error': 'Model pull timeout (5 minutes). The operation might still be running in background.',
+                'error': error_msg,
                 'model_name': model_name
             }
         except Exception as e:
+            error_msg = f'Failed to pull model: {str(e)}'
+            logger.error(f"模型拉取异常: {model_name} - {e}")
             return {
                 'status': 'error',
-                'error': f'Failed to pull model: {str(e)}',
+                'error': error_msg,
                 'model_name': model_name
             }
     
-    def chat(self, model_name: str, messages: List[Dict[str, str]], stream: bool = False) -> Dict[str, Any]:
+    def _validate_content_length(self, content: str, content_type: str = 'general') -> bool:
+        """
+        验证内容长度
+        
+        Args:
+            content: 内容
+            content_type: 内容类型
+            
+        Returns:
+            bool: 是否通过验证
+        """
+        max_length = self.config.max_prompt_length
+        
+        if content_type == 'code':
+            max_length = self.config.max_code_length
+        
+        if len(content) > max_length:
+            logger.warning(f"内容长度 ({len(content)}) 超过限制 ({max_length})")
+            return False
+        
+        return True
+    
+    def chat(self, model_name: str = None, messages: List[Dict[str, str]] = None, stream: bool = None) -> Dict[str, Any]:
         """
         与模型进行对话
         
         Args:
-            model_name: 模型名称
+            model_name: 模型名称，默认使用配置中的默认聊天模型
             messages: 对话消息列表，格式: [{"role": "user", "content": "Hello"}]
-            stream: 是否使用流式响应
+            stream: 是否使用流式响应，默认使用配置中的设置
             
         Returns:
             dict: 对话结果
         """
+        # 使用默认值
+        model_name = model_name or self.config.default_chat_model
+        messages = messages or []
+        stream = stream if stream is not None else self.config.enable_streaming
+        
+        # 验证消息内容长度
+        total_content = ' '.join([msg.get('content', '') for msg in messages])
+        if not self._validate_content_length(total_content):
+            return {
+                'status': 'error',
+                'error': f'Content too long. Maximum length: {self.config.max_prompt_length}',
+                'model': model_name
+            }
+        
         try:
             payload = {
                 'model': model_name,
@@ -200,16 +352,18 @@ class OllamaClient:
                 'stream': stream
             }
             
-            response = requests.post(
-                f"{self.base_url}/api/chat",
-                headers=self.headers,
-                json=payload,
-                timeout=self.timeout
+            if self.config.debug_mode:
+                logger.info(f"开始对话，模型: {model_name}, 消息数: {len(messages)}")
+            
+            response = self._make_request_with_retry(
+                method='POST',
+                url=f"{self.base_url}/api/chat",
+                json=payload
             )
             
             if response.status_code == 200:
                 data = response.json()
-                return {
+                result = {
                     'status': 'success',
                     'response': data.get('message', {}).get('content', ''),
                     'model': data.get('model', model_name),
@@ -218,35 +372,61 @@ class OllamaClient:
                     'total_duration': data.get('total_duration', 0),
                     'load_duration': data.get('load_duration', 0),
                     'prompt_eval_count': data.get('prompt_eval_count', 0),
-                    'eval_count': data.get('eval_count', 0)
+                    'eval_count': data.get('eval_count', 0),
+                    'config_used': {
+                        'model': model_name,
+                        'stream': stream,
+                        'max_retries': self.max_retries
+                    }
                 }
+                
+                if self.config.debug_mode:
+                    logger.info(f"对话完成，响应长度: {len(result['response'])}")
+                
+                return result
             else:
+                error_msg = f'Chat request failed: HTTP {response.status_code}'
+                logger.error(f"对话请求失败: {error_msg}")
                 return {
                     'status': 'error',
-                    'error': f'Chat request failed: HTTP {response.status_code}',
+                    'error': error_msg,
                     'message': response.text,
                     'model': model_name
                 }
                 
         except Exception as e:
+            error_msg = f'Chat request failed: {str(e)}'
+            logger.error(f"对话请求异常: {e}")
             return {
                 'status': 'error',
-                'error': f'Chat request failed: {str(e)}',
+                'error': error_msg,
                 'model': model_name
             }
     
-    def generate(self, model_name: str, prompt: str, stream: bool = False) -> Dict[str, Any]:
+    def generate(self, model_name: str = None, prompt: str = '', stream: bool = None) -> Dict[str, Any]:
         """
         生成文本
         
         Args:
-            model_name: 模型名称
+            model_name: 模型名称，默认使用配置中的默认聊天模型
             prompt: 输入提示
-            stream: 是否使用流式响应
+            stream: 是否使用流式响应，默认使用配置中的设置
             
         Returns:
             dict: 生成结果
         """
+        # 使用默认值
+        model_name = model_name or self.config.default_chat_model
+        stream = stream if stream is not None else self.config.enable_streaming
+        
+        # 验证提示长度
+        if not self._validate_content_length(prompt):
+            return {
+                'status': 'error',
+                'error': f'Prompt too long. Maximum length: {self.config.max_prompt_length}',
+                'model': model_name
+            }
+        
         try:
             payload = {
                 'model': model_name,
@@ -254,16 +434,18 @@ class OllamaClient:
                 'stream': stream
             }
             
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                headers=self.headers,
-                json=payload,
-                timeout=self.timeout
+            if self.config.debug_mode:
+                logger.info(f"开始生成文本，模型: {model_name}, 提示长度: {len(prompt)}")
+            
+            response = self._make_request_with_retry(
+                method='POST',
+                url=f"{self.base_url}/api/generate",
+                json=payload
             )
             
             if response.status_code == 200:
                 data = response.json()
-                return {
+                result = {
                     'status': 'success',
                     'response': data.get('response', ''),
                     'model': data.get('model', model_name),
@@ -273,34 +455,58 @@ class OllamaClient:
                     'total_duration': data.get('total_duration', 0),
                     'load_duration': data.get('load_duration', 0),
                     'prompt_eval_count': data.get('prompt_eval_count', 0),
-                    'eval_count': data.get('eval_count', 0)
+                    'eval_count': data.get('eval_count', 0),
+                    'config_used': {
+                        'model': model_name,
+                        'stream': stream,
+                        'max_retries': self.max_retries
+                    }
                 }
+                
+                if self.config.debug_mode:
+                    logger.info(f"文本生成完成，响应长度: {len(result['response'])}")
+                
+                return result
             else:
+                error_msg = f'Generate request failed: HTTP {response.status_code}'
+                logger.error(f"生成请求失败: {error_msg}")
                 return {
                     'status': 'error',
-                    'error': f'Generate request failed: HTTP {response.status_code}',
+                    'error': error_msg,
                     'message': response.text,
                     'model': model_name
                 }
                 
         except Exception as e:
+            error_msg = f'Generate request failed: {str(e)}'
+            logger.error(f"生成请求异常: {e}")
             return {
                 'status': 'error',
-                'error': f'Generate request failed: {str(e)}',
+                'error': error_msg,
                 'model': model_name
             }
     
-    def code_review(self, code_content: str, model_name: str = 'llama3.1:8b') -> Dict[str, Any]:
+    def code_review(self, code_content: str, model_name: str = None) -> Dict[str, Any]:
         """
         代码审查功能
         
         Args:
             code_content: 要审查的代码内容
-            model_name: 使用的模型名称，默认llama2
+            model_name: 使用的模型名称，默认使用配置中的代码审查模型
             
         Returns:
             dict: 代码审查结果
         """
+        model_name = model_name or self.config.default_code_review_model
+        
+        # 验证代码长度
+        if not self._validate_content_length(code_content, 'code'):
+            return {
+                'status': 'error',
+                'error': f'Code too long. Maximum length: {self.config.max_code_length}',
+                'model': model_name
+            }
+        
         prompt = f"""
 请对以下代码进行详细的代码审查，包括但不限于：
 
@@ -329,28 +535,45 @@ class OllamaClient:
             }
         ]
         
+        if self.config.debug_mode:
+            logger.info(f"开始代码审查，代码长度: {len(code_content)}, 模型: {model_name}")
+        
         result = self.chat(model_name, messages)
         
         if result['status'] == 'success':
             result['review_type'] = 'code_review'
             result['code_length'] = len(code_content)
             result['model_used'] = model_name
+            result['config_limits'] = {
+                'max_code_length': self.config.max_code_length,
+                'max_prompt_length': self.config.max_prompt_length
+            }
+            
+            if self.config.debug_mode:
+                logger.info(f"代码审查完成，审查意见长度: {len(result.get('response', ''))}")
         
         return result
     
-    def explain_commit(self, commit_data: Dict[str, Any], model_name: str = 'llama3.1:8b') -> Dict[str, Any]:
+    def explain_commit(self, commit_data: Dict[str, Any], model_name: str = None) -> Dict[str, Any]:
         """
         解释提交内容
         
         Args:
             commit_data: 提交数据，包含提交信息和代码变更
-            model_name: 使用的模型名称
+            model_name: 使用的模型名称，默认使用配置中的提交分析模型
             
         Returns:
             dict: 提交解释结果
         """
+        model_name = model_name or self.config.default_commit_analysis_model
+        
         commit_message = commit_data.get('message', '')
         files_changed = commit_data.get('files', [])
+        
+        # 限制文件数量
+        if len(files_changed) > self.config.max_commit_files:
+            logger.warning(f"提交文件数 ({len(files_changed)}) 超过限制 ({self.config.max_commit_files})")
+            files_changed = files_changed[:self.config.max_commit_files]
         
         files_info = []
         for file_data in files_changed:
@@ -358,7 +581,11 @@ class OllamaClient:
             files_info.append(f"状态: {file_data.get('status', '')}")
             files_info.append(f"修改: +{file_data.get('additions', 0)} -{file_data.get('deletions', 0)}")
             if 'patch' in file_data:
-                files_info.append(f"代码变更:\n{file_data['patch'][:500]}...")  # 限制长度
+                # 限制patch长度
+                patch = file_data['patch']
+                if len(patch) > 500:
+                    patch = patch[:500] + "..."
+                files_info.append(f"代码变更:\n{patch}")
             files_info.append("---")
         
         prompt = f"""
@@ -376,6 +603,14 @@ class OllamaClient:
 4. 建议和改进点
 """
         
+        # 验证总内容长度
+        if not self._validate_content_length(prompt):
+            return {
+                'status': 'error',
+                'error': f'Commit data too long. Maximum length: {self.config.max_prompt_length}',
+                'model': model_name
+            }
+        
         messages = [
             {
                 "role": "system",
@@ -387,6 +622,9 @@ class OllamaClient:
             }
         ]
         
+        if self.config.debug_mode:
+            logger.info(f"开始提交分析，文件数: {len(files_changed)}, 模型: {model_name}")
+        
         result = self.chat(model_name, messages)
         
         if result['status'] == 'success':
@@ -394,6 +632,13 @@ class OllamaClient:
             result['commit_sha'] = commit_data.get('sha', '')
             result['files_count'] = len(files_changed)
             result['model_used'] = model_name
+            result['config_limits'] = {
+                'max_commit_files': self.config.max_commit_files,
+                'max_prompt_length': self.config.max_prompt_length
+            }
+            
+            if self.config.debug_mode:
+                logger.info(f"提交分析完成，分析结果长度: {len(result.get('response', ''))}")
         
         return result
     
@@ -411,18 +656,26 @@ class OllamaClient:
             'ollama_client': {
                 'base_url': self.base_url,
                 'connection_status': connection_status['status'],
-                'timeout': self.timeout,
+                'connection_timeout': self.connection_timeout,
+                'request_timeout': self.request_timeout,
+                'max_retries': self.max_retries,
+                'retry_delay': self.retry_delay,
                 'available_models': connection_status.get('available_models', []),
-                'models_count': models_info.get('models_count', 0)
+                'models_count': models_info.get('models_count', 0),
+                'config_loaded': True
             },
             'connection_details': connection_status,
             'models_details': models_info.get('models', []),
+            'configuration': ollama_config.to_dict(),
             'capabilities': [
                 'code_review',
                 'commit_explanation', 
                 'text_generation',
                 'chat_conversation',
-                'model_management'
+                'model_management',
+                'retry_mechanism',
+                'content_validation',
+                'logging_support'
             ]
         }
 

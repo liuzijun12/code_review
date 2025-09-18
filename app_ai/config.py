@@ -300,3 +300,188 @@ class GitHubConfig:
 
 # 全局配置实例
 github_config = GitHubConfig()
+
+@dataclass
+class OllamaConfig:
+    """Ollama服务配置"""
+    
+    # 基础连接配置
+    base_url: str = "http://localhost:11434"
+    api_version: str = "v1"
+    
+    # 超时配置
+    connection_timeout: int = 5          # 连接超时（秒）
+    request_timeout: int = 120           # 请求超时（秒）- AI推理需要更长时间
+    model_pull_timeout: int = 300        # 模型拉取超时（秒）- 5分钟
+    
+    # 默认模型配置
+    default_chat_model: str = "llama3.1:8b"
+    default_code_review_model: str = "llama3.1:8b"
+    default_commit_analysis_model: str = "llama3.1:8b"
+    
+    # 请求配置
+    max_retries: int = 3                 # 最大重试次数
+    retry_delay: float = 2.0             # 重试延迟（秒）
+    retry_backoff_factor: float = 2.0    # 重试延迟倍数
+    
+    # 模型管理配置
+    auto_pull_models: bool = False       # 是否自动拉取缺失的模型
+    model_cache_enabled: bool = True     # 是否启用模型缓存
+    
+    # 内容限制配置
+    max_prompt_length: int = 32000       # 最大提示长度
+    max_code_length: int = 20000         # 代码审查最大长度
+    max_commit_files: int = 10           # 提交分析最大文件数
+    
+    # 性能配置
+    enable_streaming: bool = False       # 是否启用流式响应
+    concurrent_requests: int = 2         # 并发请求数
+    
+    # 调试配置
+    debug_mode: bool = False             # 调试模式
+    log_requests: bool = False           # 记录请求日志
+    verbose_errors: bool = False         # 详细错误信息
+    
+    # 健康检查配置
+    health_check_interval: int = 300     # 健康检查间隔（秒）
+    health_check_enabled: bool = True    # 是否启用健康检查
+    
+    def __post_init__(self):
+        """初始化后处理"""
+        # 确保URL格式正确
+        self.base_url = self.base_url.rstrip('/')
+        
+        # 验证配置
+        self._validate_config()
+    
+    def _validate_config(self):
+        """验证配置参数"""
+        if self.connection_timeout <= 0:
+            raise ValueError("connection_timeout must be positive")
+        if self.request_timeout <= 0:
+            raise ValueError("request_timeout must be positive")
+        if self.max_retries < 0:
+            raise ValueError("max_retries cannot be negative")
+        if self.retry_delay < 0:
+            raise ValueError("retry_delay cannot be negative")
+        if self.max_prompt_length <= 0:
+            raise ValueError("max_prompt_length must be positive")
+        if self.concurrent_requests <= 0:
+            raise ValueError("concurrent_requests must be positive")
+        
+        # 验证超时时间关系
+        if self.connection_timeout >= self.request_timeout:
+            logger.warning("connection_timeout should be less than request_timeout")
+
+class OllamaConfigManager:
+    """Ollama配置管理器"""
+    
+    def __init__(self):
+        logger.info("初始化Ollama配置管理器")
+        self.config = self._load_ollama_config()
+        logger.info(f"Ollama配置加载完成，服务地址: {self.config.base_url}")
+    
+    def _load_ollama_config(self) -> OllamaConfig:
+        """加载Ollama配置"""
+        logger.debug("加载Ollama配置")
+        return OllamaConfig(
+            # 基础配置
+            base_url=os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434'),
+            api_version=os.getenv('OLLAMA_API_VERSION', 'v1'),
+            
+            # 超时配置
+            connection_timeout=int(os.getenv('OLLAMA_CONNECTION_TIMEOUT', '5')),
+            request_timeout=int(os.getenv('OLLAMA_REQUEST_TIMEOUT', '120')),
+            model_pull_timeout=int(os.getenv('OLLAMA_MODEL_PULL_TIMEOUT', '300')),
+            
+            # 默认模型配置
+            default_chat_model=os.getenv('OLLAMA_DEFAULT_CHAT_MODEL', 'llama3.1:8b'),
+            default_code_review_model=os.getenv('OLLAMA_CODE_REVIEW_MODEL', 'llama3.1:8b'),
+            default_commit_analysis_model=os.getenv('OLLAMA_COMMIT_ANALYSIS_MODEL', 'llama3.1:8b'),
+            
+            # 请求配置
+            max_retries=int(os.getenv('OLLAMA_MAX_RETRIES', '3')),
+            retry_delay=float(os.getenv('OLLAMA_RETRY_DELAY', '2.0')),
+            retry_backoff_factor=float(os.getenv('OLLAMA_RETRY_BACKOFF', '2.0')),
+            
+            # 模型管理配置
+            auto_pull_models=os.getenv('OLLAMA_AUTO_PULL', 'false').lower() == 'true',
+            model_cache_enabled=os.getenv('OLLAMA_CACHE_ENABLED', 'true').lower() == 'true',
+            
+            # 内容限制配置
+            max_prompt_length=int(os.getenv('OLLAMA_MAX_PROMPT_LENGTH', '32000')),
+            max_code_length=int(os.getenv('OLLAMA_MAX_CODE_LENGTH', '20000')),
+            max_commit_files=int(os.getenv('OLLAMA_MAX_COMMIT_FILES', '10')),
+            
+            # 性能配置
+            enable_streaming=os.getenv('OLLAMA_ENABLE_STREAMING', 'false').lower() == 'true',
+            concurrent_requests=int(os.getenv('OLLAMA_CONCURRENT_REQUESTS', '2')),
+            
+            # 调试配置
+            debug_mode=os.getenv('OLLAMA_DEBUG', 'false').lower() == 'true',
+            log_requests=os.getenv('OLLAMA_LOG_REQUESTS', 'false').lower() == 'true',
+            verbose_errors=os.getenv('OLLAMA_VERBOSE_ERRORS', 'false').lower() == 'true',
+            
+            # 健康检查配置
+            health_check_interval=int(os.getenv('OLLAMA_HEALTH_CHECK_INTERVAL', '300')),
+            health_check_enabled=os.getenv('OLLAMA_HEALTH_CHECK_ENABLED', 'true').lower() == 'true',
+        )
+    
+    def get_config(self) -> OllamaConfig:
+        """获取Ollama配置"""
+        return self.config
+    
+    def is_configured(self) -> bool:
+        """检查是否已正确配置"""
+        return bool(self.config.base_url)
+    
+    def get_service_url(self) -> str:
+        """获取服务URL"""
+        return self.config.base_url
+    
+    def get_default_model(self, task_type: str = 'chat') -> str:
+        """获取默认模型"""
+        if task_type == 'code_review':
+            return self.config.default_code_review_model
+        elif task_type == 'commit_analysis':
+            return self.config.default_commit_analysis_model
+        else:
+            return self.config.default_chat_model
+    
+    def update_config(self, **kwargs):
+        """更新配置"""
+        logger.info(f"更新Ollama配置项: {list(kwargs.keys())}")
+        for key, value in kwargs.items():
+            if hasattr(self.config, key):
+                old_value = getattr(self.config, key)
+                setattr(self.config, key, value)
+                logger.debug(f"更新Ollama配置 {key}: {old_value} -> {value}")
+            else:
+                logger.error(f"未知的Ollama配置项: {key}")
+                raise ValueError(f"Unknown Ollama config key: {key}")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return {
+            'base_url': self.config.base_url,
+            'api_version': self.config.api_version,
+            'connection_timeout': self.config.connection_timeout,
+            'request_timeout': self.config.request_timeout,
+            'model_pull_timeout': self.config.model_pull_timeout,
+            'default_chat_model': self.config.default_chat_model,
+            'default_code_review_model': self.config.default_code_review_model,
+            'default_commit_analysis_model': self.config.default_commit_analysis_model,
+            'max_retries': self.config.max_retries,
+            'retry_delay': self.config.retry_delay,
+            'auto_pull_models': self.config.auto_pull_models,
+            'model_cache_enabled': self.config.model_cache_enabled,
+            'max_prompt_length': self.config.max_prompt_length,
+            'max_code_length': self.config.max_code_length,
+            'enable_streaming': self.config.enable_streaming,
+            'concurrent_requests': self.config.concurrent_requests,
+            'debug_mode': self.config.debug_mode,
+            'health_check_enabled': self.config.health_check_enabled,
+        }
+
+# 全局Ollama配置实例
+ollama_config = OllamaConfigManager()
