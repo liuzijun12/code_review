@@ -436,3 +436,96 @@ class DatabaseClient:
         except Exception as e:
             logger.error(f"搜索提交记录失败: {str(e)}")
             return False, [], f"搜索失败: {str(e)}"
+
+    @staticmethod
+    def get_unanalyzed_commits(limit=50):
+        """
+        获取未分析的提交记录
+        
+        Args:
+            limit: 返回记录的最大数量
+            
+        Returns:
+            list: 未分析的提交记录列表
+        """
+        logger.info(f"获取未分析的提交记录，限制数量: {limit}")
+        
+        try:
+            from django.db.models import Q
+            
+            # 查询analysis_suggestion为空或NULL的记录
+            unanalyzed_commits = GitCommitAnalysis.objects.filter(
+                Q(analysis_suggestion__isnull=True) | 
+                Q(analysis_suggestion='')
+            ).order_by('-commit_timestamp')[:limit]
+            
+            commits_list = []
+            for commit in unanalyzed_commits:
+                commit_dict = {
+                    'commit_sha': commit.commit_sha,
+                    'author_name': commit.author_name,
+                    'commit_timestamp': commit.commit_timestamp.isoformat(),
+                    'commit_message': commit.commit_message,
+                    'code_diff': commit.code_diff,
+                    'created_at': commit.created_at.isoformat(),
+                    'updated_at': commit.updated_at.isoformat()
+                }
+                commits_list.append(commit_dict)
+            
+            logger.info(f"获取到 {len(commits_list)} 条未分析的提交记录")
+            return commits_list
+            
+        except Exception as e:
+            error_msg = f"获取未分析提交记录失败: {str(e)}"
+            logger.error(error_msg)
+            return []
+
+    @staticmethod
+    def update_analysis_suggestion(commit_sha, analysis_suggestion):
+        """
+        更新指定提交的AI分析建议
+        
+        Args:
+            commit_sha: 提交SHA
+            analysis_suggestion: AI分析建议内容
+            
+        Returns:
+            dict: 更新结果
+        """
+        logger.info(f"更新提交 {commit_sha[:8]} 的AI分析建议")
+        
+        try:
+            # 查找指定的提交记录
+            commit = GitCommitAnalysis.objects.filter(commit_sha=commit_sha).first()
+            
+            if not commit:
+                error_msg = f"未找到提交记录: {commit_sha}"
+                logger.error(error_msg)
+                return {
+                    'success': False,
+                    'message': error_msg,
+                    'commit_sha': commit_sha
+                }
+            
+            # 更新分析建议
+            commit.analysis_suggestion = analysis_suggestion
+            commit.save()
+            
+            logger.info(f"成功更新提交 {commit_sha[:8]} 的AI分析建议，长度: {len(analysis_suggestion)}")
+            return {
+                'success': True,
+                'message': 'AI分析建议更新成功',
+                'commit_sha': commit_sha,
+                'analysis_length': len(analysis_suggestion),
+                'updated_at': commit.updated_at.isoformat()
+            }
+            
+        except Exception as e:
+            error_msg = f"更新AI分析建议失败: {str(e)}"
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'message': error_msg,
+                'commit_sha': commit_sha,
+                'error': str(e)
+            }

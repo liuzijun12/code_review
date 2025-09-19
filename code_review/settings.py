@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/4.1/ref/settings/
 
 from pathlib import Path
 import os
+from celery.schedules import crontab
 from dotenv import load_dotenv
 
 # 使用pymysql替代MySQLdb
@@ -48,6 +49,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django_celery_beat',  # Celery定时任务管理
     'app_ai',
 ]
 
@@ -145,8 +147,59 @@ STATICFILES_DIRS = [
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# ===== Django Admin 配置 =====
-# 可以在这里添加原生 Django admin 的自定义配置
+
+# ===== Celery 配置 =====
+# Celery Broker设置
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+
+# Celery Result Backend设置
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+
+# Celery任务序列化
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ['json']
+
+# Celery时区设置
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_ENABLE_UTC = True
+
+# Celery任务路由
+CELERY_TASK_ROUTES = {
+    'app_ai.tasks.ai_analysis.*': {'queue': 'ai_analysis'},
+    'app_ai.tasks.github_data.*': {'queue': 'github_data'},
+    'app_ai.tasks.database.*': {'queue': 'database'},
+}
+
+# Celery任务结果过期时间（秒）
+CELERY_RESULT_EXPIRES = 3600  # 1小时
+
+# Celery Worker配置
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_WORKER_MAX_TASKS_PER_CHILD = 1000
+
+# Celery Beat调度器配置（用于定时任务）
+# 使用数据库调度器，可以在Django Admin中管理定时任务
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# 默认的定时任务配置（也可以在Admin界面中添加）
+CELERY_BEAT_SCHEDULE = {
+    # AI分析定时任务 - 每30分钟检查一次未分析的提交
+    'auto-ai-analysis': {
+        'task': 'app_ai.tasks.ai_analysis.check_and_analyze_pending_commits',
+        'schedule': crontab(minute='*/30'),  # 每30分钟执行一次
+    },
+
+}
+
+# Celery任务失败重试配置
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+
+# Celery日志配置
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+CELERY_WORKER_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s] %(message)s'
+CELERY_WORKER_TASK_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s][%(task_name)s(%(task_id)s)] %(message)s'
 
 # ===== 日志配置 =====
 LOGGING = {
