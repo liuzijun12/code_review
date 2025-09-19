@@ -221,9 +221,25 @@ class GitHubWebhookClient:
         
         # 解析JSON
         try:
-            payload = json.loads(request.body)
-        except json.JSONDecodeError as e:
-            logger.error(f"Webhook请求JSON解析失败: {str(e)}")
+            if len(request.body) == 0:
+                logger.error("Webhook请求体为空")
+                return False, JsonResponse({'error': 'Empty request body'}, status=400), None
+            
+            body_str = request.body.decode('utf-8')
+            
+            # GitHub webhook可能发送两种格式：
+            # 1. 直接JSON格式
+            # 2. form-encoded格式: payload=<URL_encoded_JSON>
+            if body_str.startswith('payload='):
+                from urllib.parse import unquote_plus
+                payload_str = body_str[8:]  # 移除 'payload=' 前缀
+                payload_str = unquote_plus(payload_str)  # URL解码
+                payload = json.loads(payload_str)
+            else:
+                payload = json.loads(body_str)
+                
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            logger.error(f"Webhook请求解析失败: {str(e)}")
             return False, JsonResponse({'error': 'Invalid JSON payload'}, status=400), None
         
         # 验证仓库权限

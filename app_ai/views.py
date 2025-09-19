@@ -8,11 +8,14 @@ from django.db import transaction
 import requests
 import json
 from .git_client import GitHubWebhookClient, GitHubDataClient, ParamsValidator
-from .ollama_client import OllamaClient
 from .schemas import is_valid_data_type, DATA_TYPES, success_response, COMMON_RESPONSES
 from .models import GitCommitAnalysis
 from .sql_client import DatabaseClient
 from .service import process_webhook_event
+import logging
+
+# 创建logger实例
+logger = logging.getLogger(__name__)
 
 
 @csrf_exempt
@@ -73,6 +76,7 @@ def get_github_data(request):
     
     # 如果是提交详情请求，自动保存到数据库
     if data_type == 'commit_details' and result.get('status') == 'success':
+        logger.info("开始将commit_details保存到数据库")
         try:
             # 构造GitHub API格式的数据用于保存
             if 'commit_detail' in result and 'commit' in result['commit_detail']:
@@ -101,6 +105,11 @@ def get_github_data(request):
                 # 保存到数据库
                 success, message, commit_obj = DatabaseClient.save_commit_to_database(github_data)
                 
+                if success:
+                    logger.info(f"提交详情保存成功: {commit_obj.commit_sha[:8] if commit_obj else 'Unknown'}")
+                else:
+                    logger.warning(f"提交详情保存失败: {message}")
+                
                 # 在响应中添加数据库保存状态
                 result['database_save'] = {
                     'success': success,
@@ -118,10 +127,12 @@ def get_github_data(request):
     
     # 如果是最近提交请求，批量保存到数据库（获取详细信息）
     elif data_type == 'recent_commits' and result.get('status') == 'success':
+        logger.info("开始批量保存recent_commits到数据库")
         try:
             if 'commits_data' in result and 'commits' in result['commits_data']:
                 commits = result['commits_data']['commits']
                 saved_count = 0
+                logger.info(f"开始处理 {len(commits)} 个提交，获取详细信息并保存到数据库")
                 
                 for commit in commits:
                     # 为每个提交获取详细信息（包含diff）
@@ -178,22 +189,27 @@ def get_github_data(request):
                                 'patch': ''  # 空的patch
                             }
                         
-                        success, _, _ = DatabaseClient.save_commit_to_database(github_data)
+                        success, message, _ = DatabaseClient.save_commit_to_database(github_data)
                         if success:
                             saved_count += 1
+                            logger.info(f"保存提交成功: {commit['sha'][:8]}")
+                        else:
+                            logger.warning(f"保存提交失败: {commit['sha'][:8]} - {message}")
                             
                     except Exception as commit_error:
-                        print(f"处理提交 {commit['sha'][:8]} 时出错: {commit_error}")
+                        logger.error(f"处理提交 {commit['sha'][:8]} 时出错: {commit_error}")
                         # 继续处理下一个提交
                         continue
                 
                 # 在响应中添加批量保存状态
                 result['database_save'] = {
                     'success': True,
-                    'message': f'批量保存完成，成功保存 {saved_count}/{len(commits)} 个提交（包含详细diff）',
+                    'message': f'GET请求批量保存完成，成功保存 {saved_count}/{len(commits)} 个提交（包含详细diff）',
                     'saved_count': saved_count,
                     'total_count': len(commits)
                 }
+                
+                logger.info(f"GET请求批量保存完成：{saved_count}/{len(commits)} 个提交")
                 
         except Exception as e:
             result['database_save'] = {
@@ -265,20 +281,20 @@ def get_commit_detail(request, commit_sha):
         
         # 返回详细信息
         return JsonResponse(success_response({
-            'commit_detail': {
-                'commit_sha': commit.commit_sha,
-                'short_sha': commit.commit_sha[:8],
-                'author_name': commit.author_name,
-                'commit_message': commit.commit_message,
-                'commit_timestamp': commit.commit_timestamp.isoformat(),
-                'code_diff': commit.code_diff,
-                'analysis_suggestion': commit.analysis_suggestion,
-                'created_at': commit.created_at.isoformat(),
-                'updated_at': commit.updated_at.isoformat(),
+            'commit': {
+                'commit_sha': commit['commit_sha'],
+                'short_sha': commit['commit_sha'][:8],
+                'author_name': commit['author_name'],
+                'commit_message': commit['commit_message'],
+                'commit_timestamp': commit['commit_timestamp'],
+                'code_diff': commit['code_diff'],
+                'analysis_suggestion': commit['analysis_suggestion'],
+                'created_at': commit['created_at'],
+                'updated_at': commit['updated_at'],
                 'stats': {
-                    'message_length': len(commit.commit_message),
-                    'diff_length': len(commit.code_diff),
-                    'has_analysis': bool(commit.analysis_suggestion)
+                    'message_length': len(commit['commit_message']),
+                    'diff_length': len(commit['code_diff']),
+                    'has_analysis': commit['has_analysis']
                 }
             }
         }))

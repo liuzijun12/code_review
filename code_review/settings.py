@@ -36,7 +36,7 @@ SECRET_KEY = 'django-insecure-2k=x9_t=1)sw*@#oabqe0*r34t*%goq95o^)$0*l_90rv4cb4*
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['0ca25ebad807.ngrok-free.app', 'localhost', '127.0.0.1']
 
 
 # Application definition
@@ -93,6 +93,10 @@ DATABASES = {
         'PASSWORD': os.getenv('DB_PASSWORD', '123456'),
         'HOST': os.getenv('DB_HOST', 'localhost'),
         'PORT': os.getenv('DB_PORT', '3306'),
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
     }
 }
 
@@ -143,3 +147,37 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ===== Django Admin 配置 =====
 # 可以在这里添加原生 Django admin 的自定义配置
+
+# ===== 日志配置 =====
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        'app_ai': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+    },
+}

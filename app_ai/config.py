@@ -33,7 +33,7 @@ class GitHubApiConfig:
     get_request_interval: float = 2.0   # GET请求间隔
     webhook_trigger_delay: float = 1.0  # webhook触发延迟
     rate_limit_interval: float = 3600.0 # 速率限制重置间隔
-    timeout_seconds: int = 30           # 请求超时时间
+    timeout_seconds: int = 15           # 请求超时时间（减少以避免webhook超时）
     
     # 时间限制配置
     max_commit_age_days: int = 30       # 最大提交年龄（天）
@@ -121,8 +121,9 @@ class GitHubApiConfig:
             raise ValueError("daily_request_limit must be positive")
         if self.hourly_request_limit <= 0:
             raise ValueError("hourly_request_limit must be positive")
+        # 检查每日和每小时限制的一致性
         if self.hourly_request_limit * 24 > self.daily_request_limit:
-            logger.warning("hourly_request_limit * 24 > daily_request_limit，可能导致每日限制过早触发")
+            logger.warning(f"每小时限制({self.hourly_request_limit}) × 24 = {self.hourly_request_limit * 24} > 每日限制({self.daily_request_limit})，可能导致每日限制过早触发")
 
 @dataclass
 class RateLimitConfig:
@@ -395,9 +396,9 @@ class OllamaConfigManager:
             model_pull_timeout=int(os.getenv('OLLAMA_MODEL_PULL_TIMEOUT', '300')),
             
             # 默认模型配置
-            default_chat_model=os.getenv('OLLAMA_DEFAULT_CHAT_MODEL', 'llama3.1:8b'),
-            default_code_review_model=os.getenv('OLLAMA_CODE_REVIEW_MODEL', 'llama3.1:8b'),
-            default_commit_analysis_model=os.getenv('OLLAMA_COMMIT_ANALYSIS_MODEL', 'llama3.1:8b'),
+            default_chat_model=os.getenv('OLLAMA_DEFAULT_CHAT_MODEL', 'deepseek-coder:1.3b'),
+            default_code_review_model=os.getenv('OLLAMA_CODE_REVIEW_MODEL', 'deepseek-coder:1.3b'),
+            default_commit_analysis_model=os.getenv('OLLAMA_COMMIT_ANALYSIS_MODEL', 'deepseek-coder:1.3b'),
             
             # 请求配置
             max_retries=int(os.getenv('OLLAMA_MAX_RETRIES', '3')),
