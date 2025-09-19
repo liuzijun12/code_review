@@ -40,6 +40,11 @@ class GitCommitAnalysis(models.Model):
         verbose_name="AI修改意见"
     )
 
+    is_push = models.IntegerField(
+        default=0,
+        choices=[(0, '未推送'), (1, '已推送')],
+        verbose_name="是否已推送到企业微信"
+    )
 
     created_at = models.DateTimeField(
         auto_now_add=True,

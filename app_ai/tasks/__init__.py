@@ -7,9 +7,11 @@ Celery任务模块
 from . import ai_analysis
 from . import github_data  
 from . import database
+from . import wx_push
 
 __all__ = [
     'ai_analysis',
     'github_data', 
     'database',
+    'wx_push',
 ]

@@ -15,6 +15,7 @@ class GitCommitAnalysisAdmin(admin.ModelAdmin):
         'author_name', 
         'commit_timestamp',
         'has_analysis',
+        'push_status',
         'created_at',
         'updated_at'
     ]
@@ -24,6 +25,7 @@ class GitCommitAnalysisAdmin(admin.ModelAdmin):
         'author_name',
         'commit_timestamp',
         'created_at',
+        'is_push',  # 按推送状态过滤
         ('analysis_suggestion', admin.EmptyFieldListFilter),  # 按是否有AI分析过滤
     ]
     
@@ -47,6 +49,9 @@ class GitCommitAnalysisAdmin(admin.ModelAdmin):
         ('AI分析', {
             'fields': ('analysis_suggestion',),
             'classes': ('collapse',)
+        }),
+        ('企业微信推送', {
+            'fields': ('is_push',),
         }),
         ('时间戳', {
             'fields': ('created_at', 'updated_at'),
@@ -84,6 +89,19 @@ class GitCommitAnalysisAdmin(admin.ModelAdmin):
             )
     has_analysis.short_description = 'AI分析状态'
     has_analysis.admin_order_field = 'analysis_suggestion'
+    
+    def push_status(self, obj):
+        """显示推送状态"""
+        if obj.is_push == 1:
+            return format_html(
+                '<span style="color: green;">✓ 已推送</span>'
+            )
+        else:
+            return format_html(
+                '<span style="color: orange;">⏳ 未推送</span>'
+            )
+    push_status.short_description = '推送状态'
+    push_status.admin_order_field = 'is_push'
     
     # 批量操作
     actions = ['mark_for_reanalysis', 'clear_analysis']
