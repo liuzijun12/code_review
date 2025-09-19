@@ -37,7 +37,7 @@ SECRET_KEY = 'django-insecure-2k=x9_t=1)sw*@#oabqe0*r34t*%goq95o^)$0*l_90rv4cb4*
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['0ca25ebad807.ngrok-free.app', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['bfc418017b1b.ngrok-free.app', 'localhost', '127.0.0.1']
 
 
 # Application definition
@@ -182,15 +182,8 @@ CELERY_WORKER_MAX_TASKS_PER_CHILD = 1000
 # 使用数据库调度器，可以在Django Admin中管理定时任务
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
-# 默认的定时任务配置（也可以在Admin界面中添加）
-CELERY_BEAT_SCHEDULE = {
-    # AI分析定时任务 - 每30分钟检查一次未分析的提交
-    'auto-ai-analysis': {
-        'task': 'app_ai.tasks.ai_analysis.check_and_analyze_pending_commits',
-        'schedule': crontab(minute='*/30'),  # 每30分钟执行一次
-    },
-
-}
+# 定时任务配置 - 通过Django Admin管理
+# CELERY_BEAT_SCHEDULE = {} # 留空，使用数据库调度器在Admin中配置
 
 # Celery任务失败重试配置
 CELERY_TASK_ACKS_LATE = True
