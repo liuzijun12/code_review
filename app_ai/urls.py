@@ -10,9 +10,20 @@ urlpatterns = [
     # GET请求 - 统一数据接口（自动保存到数据库）
     path('github-data/', views.get_github_data, name='github_data'),
     
-    # 数据库查询接口
-    path('saved-commits/', views.get_saved_commits, name='get_saved_commits'),           # GET - 获取保存的提交列表
-    path('commit-detail/<str:commit_sha>/', views.get_commit_detail, name='get_commit_detail'), # GET - 获取单个提交详情
-    path('database-stats/', views.get_database_stats, name='get_database_stats'),       # GET - 获取数据库统计
-    path('search-commits/', views.search_commits, name='search_commits'),               # GET - 搜索提交记录
+    # 数据库查询接口已移除 - 对应的 DatabaseClient 方法不存在
+    
+    # 异步接口
+    path('github-data-async/', views.get_github_data_async, name='github_data_async'),  # POST - 异步获取GitHub数据
+    path('task-status/<str:task_id>/', views.get_task_status, name='get_task_status'),  # GET - 获取任务状态
+    path('recent-commits-async/', views.get_recent_commits_async_start, name='recent_commits_async'), # GET - 异步获取最近提交
+    path('commit-details-async/', views.get_commit_details_async_start, name='commit_details_async'), # GET - 异步获取提交详情
+    
+    # Ollama分析接口
+    path('ollama-analysis/', views.start_ollama_analysis_api, name='start_ollama_analysis'),  # POST - 启动Ollama分析
+    path('analyze-commit/', views.analyze_single_commit_api, name='analyze_single_commit'),   # POST - 分析单个提交
+    path('unanalyzed-commits/', views.get_unanalyzed_commits_api, name='get_unanalyzed_commits'), # GET - 获取未分析提交
+    
+    # 推送接口
+    path('push-results/', views.start_push_task_api, name='start_push_task'),  # POST - 启动推送任务
+    path('unpushed-commits/', views.get_unpushed_commits_api, name='get_unpushed_commits'), # GET - 获取未推送提交
 ]

@@ -37,7 +37,7 @@ SECRET_KEY = 'django-insecure-2k=x9_t=1)sw*@#oabqe0*r34t*%goq95o^)$0*l_90rv4cb4*
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['bfc418017b1b.ngrok-free.app', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['5738e5658b27.ngrok-free.app', 'localhost', '127.0.0.1']
 
 
 # Application definition
@@ -164,11 +164,9 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_ENABLE_UTC = True
 
-# Celery任务路由
+# Celery任务路由 - 已移除旧的tasks目录配置
 CELERY_TASK_ROUTES = {
-    'app_ai.tasks.ai_analysis.*': {'queue': 'ai_analysis'},
-    'app_ai.tasks.github_data.*': {'queue': 'github_data'},
-    'app_ai.tasks.database.*': {'queue': 'database'},
+    # 所有任务使用默认队列
 }
 
 # Celery任务结果过期时间（秒）
@@ -178,12 +176,23 @@ CELERY_RESULT_EXPIRES = 3600  # 1小时
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_WORKER_MAX_TASKS_PER_CHILD = 1000
 
+# 使用线程池而不是进程池，避免HTTP连接问题
+CELERY_WORKER_POOL = 'threads'
+CELERY_WORKER_CONCURRENCY = 2
+
 # Celery Beat调度器配置（用于定时任务）
 # 使用数据库调度器，可以在Django Admin中管理定时任务
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 # 定时任务配置 - 通过Django Admin管理
 # CELERY_BEAT_SCHEDULE = {} # 留空，使用数据库调度器在Admin中配置
+
+# 手动指定要导入的任务模块
+CELERY_IMPORTS = [
+    'app_ai.tasks.async_get',
+    'app_ai.tasks.async_ollama', 
+    'app_ai.tasks.async_push',
+]
 
 # Celery任务失败重试配置
 CELERY_TASK_ACKS_LATE = True

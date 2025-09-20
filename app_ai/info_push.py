@@ -298,6 +298,74 @@ class WeChatWorkPusher:
             logger.error(f"推送单个提交异常: {e}")
             return False
     
+    def push_single_commit_data(self, commit_data: dict) -> dict:
+        """
+        推送单个提交的分析结果（接受字典数据）
+        
+        Args:
+            commit_data: 包含提交信息的字典
+            
+        Returns:
+            dict: 推送结果
+        """
+        try:
+            commit_sha = commit_data.get('commit_sha')
+            if not commit_sha:
+                return {
+                    'success': False,
+                    'message': '缺少commit_sha字段'
+                }
+            
+            logger.info(f"推送单个提交数据: {commit_sha[:8]}")
+            
+            # 获取指定提交记录（只获取未推送的）
+            record = GitCommitAnalysis.objects.filter(
+                commit_sha=commit_sha,
+                analysis_suggestion__isnull=False,
+                is_push=0  # 只推送未推送的记录
+            ).exclude(analysis_suggestion='').first()
+            
+            if not record:
+                logger.warning(f"未找到提交 {commit_sha[:8]} 的未推送完整分析记录")
+                return {
+                    'success': False,
+                    'message': f'未找到提交 {commit_sha[:8]} 的未推送完整分析记录'
+                }
+            
+            # 格式化并发送消息
+            message = self.format_commit_message(record)
+            if not message:
+                return {
+                    'success': False,
+                    'message': '消息格式化失败'
+                }
+            
+            # 发送消息
+            if self.send_message(message):
+                # 推送成功，标记为已推送
+                if self.mark_as_pushed(record):
+                    return {
+                        'success': True,
+                        'message': f'提交 {commit_sha[:8]} 推送成功'
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'message': f'提交 {commit_sha[:8]} 推送成功但标记失败'
+                    }
+            else:
+                return {
+                    'success': False,
+                    'message': f'提交 {commit_sha[:8]} 消息发送失败'
+                }
+                
+        except Exception as e:
+            logger.error(f"推送单个提交异常: {e}")
+            return {
+                'success': False,
+                'message': f'推送异常: {str(e)}'
+            }
+    
     def send_summary_report(self) -> bool:
         """
         发送分析总结报告
