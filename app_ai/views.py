@@ -234,12 +234,7 @@ def _save_recent_commits_batch(result, data_client):
             'message': f'批量保存失败: {str(e)}',
             'saved_count': 0
         }
-
-
-# ==================== 数据库查询接口 ====================
-# 注意：这些接口在 urls.py 中定义但可能未被实际使用，保留以防需要
-
-
+        
 # ==================== 异步接口 ====================
 
 @require_POST

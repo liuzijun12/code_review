@@ -38,7 +38,7 @@ def fetch_github_data_async(data_type: str, **params):
         
         # 处理webhook状态（不需要异步）
         if data_type == 'webhook_status':
-            from .git_client import GitHubWebhookClient
+            from ..git_client import GitHubWebhookClient
             client = GitHubWebhookClient()
             return {
                 'status': 'success',
