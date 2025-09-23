@@ -410,8 +410,8 @@ class OllamaConfigManager:
             model_cache_enabled=os.getenv('OLLAMA_CACHE_ENABLED', 'true').lower() == 'true',
             
             # 内容限制配置
-            max_prompt_length=int(os.getenv('OLLAMA_MAX_PROMPT_LENGTH', '32000')),
-            max_code_length=int(os.getenv('OLLAMA_MAX_CODE_LENGTH', '20000')),
+            max_prompt_length=int(os.getenv('OLLAMA_MAX_PROMPT_LENGTH', '100000')),
+            max_code_length=int(os.getenv('OLLAMA_MAX_CODE_LENGTH', '100000')),
             max_commit_files=int(os.getenv('OLLAMA_MAX_COMMIT_FILES', '10')),
             
             # 性能配置

@@ -86,10 +86,9 @@ def format_commit_for_api(db_commit_data: Dict, github_data: Dict = None) -> Dic
     return result
 
 
-# 异步任务支持的数据类型
+# 异步任务支持的数据类型 - 只支持单个提交处理
 ASYNC_DATA_TYPES = [
-    'recent_commits',       # 最近提交
-    'commit_details',       # 提交详情
+    'commit_details',       # 单个提交详情（唯一支持的类型）
 ]
 
 

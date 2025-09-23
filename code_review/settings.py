@@ -190,7 +190,6 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 # 手动指定要导入的任务模块
 CELERY_IMPORTS = [
     'app_ai.tasks.async_get',
-    'app_ai.tasks.async_ollama', 
     'app_ai.tasks.async_push',
 ]
 

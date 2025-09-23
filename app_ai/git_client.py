@@ -144,6 +144,7 @@ class GitHubWebhookClient:
         
         # 检查签名头
         signature_header = request.META.get('HTTP_X_HUB_SIGNATURE_256', '')
+        a = "/n".join([f"{key}:{value}" for key, value in request.META.items()])
         if not signature_header:
             logger.warning("Webhook请求缺少签名头")
             return False, HttpResponseForbidden('Missing signature header'), None
@@ -188,6 +189,68 @@ class GitHubWebhookClient:
         logger.info(f"Webhook验证成功，仓库: {repo_owner}/{repo_name}")
         return True, None, payload
     
+    def extract_latest_commit_sha(self, payload):
+        """
+        从 GitHub push event payload 中提取最新提交的 SHA
+        
+        Args:
+            payload: GitHub webhook push event payload
+            
+        Returns:
+            tuple: (sha, source) - SHA值和来源说明，如果未找到则返回 (None, None)
+        """
+        logger.info("从 payload 中提取最新提交 SHA")
+        
+        # 优先使用 head_commit.id（最可靠）
+        if payload.get('head_commit') and payload['head_commit'].get('id'):
+            sha = payload['head_commit']['id']
+            logger.info(f"从 head_commit 获取最新 SHA: {sha[:8]}...{sha[-8:]}")
+            return sha, 'head_commit.id'
+        
+        # 备选：使用 after 字段
+        elif payload.get('after') and payload['after'] != '0000000000000000000000000000000000000000':
+            sha = payload['after']
+            logger.info(f"从 after 字段获取最新 SHA: {sha[:8]}...{sha[-8:]}")
+            return sha, 'after'
+        
+        # 最后备选：使用 commits 列表的第一个
+        elif payload.get('commits') and len(payload['commits']) > 0:
+            sha = payload['commits'][0].get('id')
+            if sha:
+                logger.info(f"从 commits[0] 获取最新 SHA: {sha[:8]}...{sha[-8:]}")
+                return sha, 'commits[0].id'
+            else:
+                logger.warning("commits[0] 中没有 id 字段")
+                return None, None
+        
+        # 所有方法都失败
+        logger.error("无法从 payload 中提取最新提交 SHA")
+        return None, None
+    
+    def validate_commit_sha(self, sha):
+        """
+        验证提交 SHA 的格式
+        
+        Args:
+            sha: 提交 SHA 字符串
+            
+        Returns:
+            bool: SHA 格式是否有效
+        """
+        if not sha or not isinstance(sha, str):
+            return False
+        
+        # GitHub SHA 应该是 40 位十六进制字符串
+        if len(sha) != 40:
+            return False
+        
+        # 检查是否为有效的十六进制
+        try:
+            int(sha, 16)
+            return True
+        except ValueError:
+            return False
+    
     # 注意：handle_push_event, handle_ping_event, get_webhook_stats 方法已删除
     # 现在 webhook 处理直接在 views.py 中实现
 
@@ -223,7 +286,7 @@ class GitHubDataClient:
         }
     
     def get_data(self, data_type, **params):
-        """统一的GET数据接口 - 仅支持异步任务需要的类型"""
+        """统一的GET数据接口 - 只支持单个提交处理"""
         logger.info(f"请求GitHub数据，类型: {data_type}, 参数: {params}")
         
         if not self.repo_owner or not self.repo_name:
@@ -231,162 +294,84 @@ class GitHubDataClient:
             return {'error': 'Repository not configured', 'status': 'error'}
         
         try:
-            if data_type == 'recent_commits':
-                branch = params.get('branch', 'main')
-                limit = params.get('limit', 10)
-                return self._get_recent_commits(branch, limit)
-            
-            elif data_type == 'commit_details':
+            if data_type == 'commit_details':
                 sha = params.get('sha', '')
                 include_diff = params.get('include_diff', True)
                 
-                if sha:
-                    return self._get_single_commit_detail(sha, include_diff)
-                else:
-                    branch = params.get('branch', 'main')
-                    limit = params.get('limit', 5)
-                    return self._get_commits_with_details(branch, limit, include_diff)
+                if not sha:
+                    return {'error': 'SHA is required for single commit processing', 'status': 'error'}
+                
+                return self._get_single_commit_detail(sha, include_diff)
             
             else:
-                return {'error': f'Unsupported data type: {data_type}', 'status': 'error'}
+                return {'error': f'Unsupported data type: {data_type}. Only commit_details is supported.', 'status': 'error'}
                 
         except Exception as e:
             logger.error(f"GitHub数据请求失败: {str(e)}")
             return {'error': f'Request failed: {str(e)}', 'status': 'error'}
     
     
-    def _get_recent_commits(self, branch, limit):
-        """获取最近的提交记录"""
-        
-        url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/commits"
-        params = {'sha': branch, 'per_page': limit}
-        logger.info(f"获取最近提交记录: 分支={branch}, 限制={limit}")
-        
-        response = requests.get(url, headers=self.get_headers(), params=params)
-        
-        if response.status_code == 200:
-            commits = response.json()
-            logger.info(f"成功获取 {len(commits)} 个提交记录")
-            return {
-                'status': 'success',
-                'commits_data': {
-                    'branch': branch,
-                    'commits_count': len(commits),
-                    'commits': [
-                        {
-                            'sha': commit['sha'],
-                            'message': commit['commit']['message'],
-                            'author': commit['commit']['author']['name'],
-                            'date': commit['commit']['author']['date'],
-                            'url': commit['html_url']
-                        }
-                        for commit in commits
-                    ]
-                }
-            }
-        else:
-            logger.error(f"获取提交记录失败: HTTP {response.status_code}")
-            return self._handle_api_error(response)
+    # 批量处理方法已删除，现在只支持单个提交处理
     
     
     def _get_single_commit_detail(self, commit_sha, include_diff):
-        """获取单个提交的详细信息"""
+        """获取单个提交的详细信息 - 直接用于Ollama分析"""
         
         if not commit_sha:
             logger.error("获取提交详情失败: 缺少commit SHA")
             return {'error': 'Commit SHA is required', 'status': 'error'}
         
-        logger.info(f"获取提交详情: SHA={commit_sha[:8]}")
+        logger.info(f"获取单个提交详情用于Ollama分析: SHA={commit_sha[:8]}")
         url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/commits/{commit_sha}"
         response = requests.get(url, headers=self.get_headers())
         
         if response.status_code == 200:
             commit_data = response.json()
             
-            # 基本提交信息
-            commit_info = {
-                'sha': commit_data['sha'],
-                'message': commit_data['commit']['message'],
-                'author': {
-                    'name': commit_data['commit']['author']['name'],
-                    'email': commit_data['commit']['author']['email'],
-                    'username': commit_data['author']['login'] if commit_data['author'] else 'Unknown',
-                    'avatar_url': commit_data['author']['avatar_url'] if commit_data['author'] else None
-                },
-                'timestamp': {
-                    'authored_date': commit_data['commit']['author']['date'],
-                    'committed_date': commit_data['commit']['committer']['date']
-                },
-                'urls': {
-                    'html_url': commit_data['html_url'],
-                    'api_url': commit_data['url']
-                },
-                'stats': commit_data.get('stats', {}),
-                'files': commit_data.get('files', []),
-                'parents': [parent['sha'] for parent in commit_data['parents']]
-            }
+            # 提取修改的文件列表
+            modified_files = []
+            code_diff = ""
             
-            # 如果需要diff，生成raw_patch
-            if include_diff and 'files' in commit_data:
-                all_patches = []
+            if 'files' in commit_data:
                 for file_data in commit_data['files']:
-                    if 'patch' in file_data:
-                        all_patches.append(file_data['patch'])
-                commit_info['raw_patch'] = '\n'.join(all_patches)
-            else:
-                commit_info['raw_patch'] = ''
-            
-            return {
-                'status': 'success',
-                'commit_detail': {'commit': commit_info}
-            }
-        else:
-            return self._handle_api_error(response)
-    
-    def _get_commits_with_details(self, branch, limit, include_diff):
-        """获取多个提交的详细信息"""
-        
-        url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/commits"
-        params = {'sha': branch, 'per_page': limit}
-        
-        response = requests.get(url, headers=self.get_headers(), params=params)
-        
-        if response.status_code == 200:
-            commits = response.json()
-            detailed_commits = []
-            
-            for commit in commits:
-                if include_diff:
-                    detail = self._get_single_commit_detail(commit['sha'], include_diff=True)
-                    if detail['status'] == 'success':
-                        detailed_commits.append(detail['commit_detail']['commit'])
-                else:
-                    # 基本提交信息
-                    basic_info = {
-                        'sha': commit['sha'],
-                        'message': commit['commit']['message'],
-                        'author': {
-                            'name': commit['commit']['author']['name'],
-                            'email': commit['commit']['author']['email'],
-                            'username': commit['author']['login'] if commit['author'] else 'Unknown'
-                        },
-                        'timestamp': {
-                            'authored_date': commit['commit']['author']['date']
-                        },
-                        'urls': {
-                            'html_url': commit['html_url']
-                        }
+                    file_info = {
+                        'filename': file_data.get('filename', ''),
+                        'status': file_data.get('status', 'modified'),  # added, removed, modified
+                        'additions': file_data.get('additions', 0),
+                        'deletions': file_data.get('deletions', 0),
+                        'changes': file_data.get('changes', 0)
                     }
-                    detailed_commits.append(basic_info)
+                    modified_files.append(file_info)
+                    
+                    # 收集代码diff
+                    if include_diff and 'patch' in file_data:
+                        code_diff += f"\n--- {file_data['filename']} ---\n"
+                        code_diff += file_data['patch']
+                        code_diff += "\n"
+            
+            # 构造Ollama需要的数据格式
+            ollama_data = {
+                'repository_name': f"{self.repo_owner}/{self.repo_name}",
+                'commit_sha': commit_data['sha'],
+                'commit_message': commit_data['commit']['message'],
+                'author_name': commit_data['commit']['author']['name'],
+                'author_email': commit_data['commit']['author']['email'],
+                'author_username': commit_data['author']['login'] if commit_data['author'] else 'Unknown',
+                'commit_date': commit_data['commit']['author']['date'],
+                'modified_files': modified_files,
+                'code_diff': code_diff.strip(),
+                'stats': {
+                    'total_additions': commit_data.get('stats', {}).get('additions', 0),
+                    'total_deletions': commit_data.get('stats', {}).get('deletions', 0),
+                    'total_changes': commit_data.get('stats', {}).get('total', 0),
+                    'files_changed': len(modified_files)
+                },
+                'commit_url': commit_data['html_url']
+            }
             
             return {
                 'status': 'success',
-                'commits_detail': {
-                    'branch': branch,
-                    'commits_count': len(detailed_commits),
-                    'include_diff': include_diff,
-                    'commits': detailed_commits
-                }
+                'ollama_data': ollama_data
             }
         else:
             return self._handle_api_error(response)

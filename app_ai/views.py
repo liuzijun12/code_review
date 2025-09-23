@@ -7,7 +7,7 @@ from .schemas import is_valid_async_data_type, ASYNC_DATA_TYPES, success_respons
 from .sql_client import DatabaseClient
 # from .service import process_webhook_event  # 不再使用同步处理
 from .tasks.async_get import fetch_github_data_async
-from .tasks.async_ollama import start_ollama_analysis, start_single_commit_analysis
+# from .tasks.async_ollama import start_ollama_analysis, start_single_commit_analysis  # 不再需要，现在自动触发
 from .tasks.async_push import start_push_task
 from celery.result import AsyncResult
 import logging
@@ -21,37 +21,52 @@ logger = logging.getLogger(__name__)
 @require_http_methods(["POST"])
 def git_webhook(request):
     """GitHub webhook处理器 - 异步版本"""
+    # import pdb
+    # pdb.set_trace()
     github_client = GitHubWebhookClient()
     is_valid, error_response_data, payload = github_client.validate_webhook_request(request)
     
     if not is_valid:
         return error_response_data
-    
+
+    b = request.META
     event_type = request.META.get('HTTP_X_GITHUB_EVENT', '')
     logger.info(f"处理webhook事件: {event_type}")
     
     # 处理push事件，自动触发异步数据获取和分析
     if event_type == 'push':
         try:
-            # 启动异步GitHub数据获取任务
+            # 使用封装的方法从 payload 中获取最新提交的 SHA
+            latest_sha, sha_source = github_client.extract_latest_commit_sha(payload)
+            
+            if not latest_sha:
+                logger.error("无法从 payload 中获取最新提交 SHA")
+                return JsonResponse(error_response('无法获取最新提交 SHA', 400), status=400)
+            
+            # 验证 SHA 格式
+            if not github_client.validate_commit_sha(latest_sha):
+                logger.error(f"提取的 SHA 格式无效: {latest_sha}")
+                return JsonResponse(error_response(f'提取的 SHA 格式无效: {latest_sha}', 400), status=400)
+            
+            # 启动异步GitHub数据获取任务 - 只处理单个提交
             task = fetch_github_data_async.delay(
-                data_type='recent_commits',
-                params={
-                    'branch': payload.get('ref', 'refs/heads/main').replace('refs/heads/', ''),
-                    'limit': 10,
-                    'include_diff': True
-                }
+                data_type='commit_details',
+                sha=latest_sha,
+                include_diff=True
             )
             
-            logger.info(f"🚀 Webhook触发异步任务: {task.id}")
+            logger.info(f"🚀 Webhook触发异步任务: {task.id}, 处理提交: {latest_sha[:8]} (来源: {sha_source})")
             
             return JsonResponse(success_response({
                 'event_type': event_type,
-                'message': 'Push事件处理成功，已启动异步数据获取和AI分析',
+                'message': f'Push事件处理成功，已启动单个提交的异步数据获取和AI分析',
                 'async_task_id': task.id,
+                'commit_sha': latest_sha,
+                'commit_short_sha': latest_sha[:8],
+                'sha_source': sha_source,
                 'repository': payload.get('repository', {}).get('full_name', 'unknown'),
                 'branch': payload.get('ref', 'refs/heads/main').replace('refs/heads/', ''),
-                'commits_count': len(payload.get('commits', [])),
+                'total_commits_in_push': len(payload.get('commits', [])),
                 'check_url': f'/ai/task-status/{task.id}/'
             }))
             
@@ -159,81 +174,7 @@ def _save_single_commit(result):
         }
 
 
-def _save_recent_commits_batch(result, data_client):
-    """批量保存最近提交到数据库"""
-    try:
-        if 'commits_data' in result and 'commits' in result['commits_data']:
-            commits = result['commits_data']['commits']
-            saved_count = 0
-            
-            for commit in commits:
-                try:
-                    detail_result = data_client.get_data('commit_details', 
-                                                       sha=commit['sha'], 
-                                                       include_diff=True)
-                    
-                    if detail_result.get('status') == 'success':
-                        commit_detail = detail_result['commit_detail']['commit']
-                        github_data = {
-                            'sha': commit_detail['sha'],
-                            'commit': {
-                                'author': {
-                                    'name': commit_detail['author']['name'],
-                                    'email': commit_detail['author']['email'],
-                                    'date': commit_detail['timestamp']['authored_date']
-                                },
-                                'message': commit_detail['message']
-                            },
-                            'author': {
-                                'login': commit_detail['author']['username'],
-                                'avatar_url': commit_detail['author'].get('avatar_url')
-                            },
-                            'html_url': commit_detail['urls']['html_url'],
-                            'url': commit_detail['urls']['api_url'],
-                            'stats': commit_detail.get('stats', {}),
-                            'files': commit_detail.get('files', []),
-                            'parents': commit_detail.get('parents', []),
-                            'patch': commit_detail.get('raw_patch', '')
-                        }
-                    else:
-                        # 简化版本
-                        github_data = {
-                            'sha': commit['sha'],
-                            'commit': {
-                                'author': {
-                                    'name': commit['author'],
-                                    'email': 'unknown@example.com',
-                                    'date': commit['date']
-                                },
-                                'message': commit['message']
-                            },
-                            'author': {'login': 'unknown', 'avatar_url': None},
-                            'html_url': commit['url'],
-                            'url': commit['url'],
-                            'stats': {}, 'files': [], 'parents': [], 'patch': ''
-                        }
-                    
-                    success, message, _ = DatabaseClient.save_commit_to_database(github_data)
-                    if success:
-                        saved_count += 1
-                        
-                except Exception as commit_error:
-                    logger.error(f"处理提交 {commit['sha'][:8]} 时出错: {commit_error}")
-                    continue
-            
-            result['database_save'] = {
-                'success': True,
-                'message': f'批量保存完成，成功保存 {saved_count}/{len(commits)} 个提交',
-                'saved_count': saved_count,
-                'total_count': len(commits)
-            }
-            
-    except Exception as e:
-        result['database_save'] = {
-            'success': False,
-            'message': f'批量保存失败: {str(e)}',
-            'saved_count': 0
-        }
+# _save_recent_commits_batch 函数已删除，现在只支持单个提交处理
         
 # ==================== 异步接口 ====================
 
@@ -319,35 +260,11 @@ def get_task_status(request, task_id):
 
 @require_GET
 def get_recent_commits_async_start(request):
-    """快速启动异步获取最近提交的任务"""
-    try:
-        limit = int(request.GET.get('limit', 10))
-        include_details = request.GET.get('include_details', 'true').lower() == 'true'
-        
-        if limit < 1 or limit > 100:
-            return JsonResponse(error_response(
-                'limit', 'Must be between 1 and 100'
-            ), status=400)
-        
-        task = fetch_github_data_async.delay('recent_commits', limit=limit, include_details=include_details)
-        
-        logger.info(f"启动异步获取最近提交任务: {task.id}, limit={limit}")
-        
-        return JsonResponse(success_response({
-            'task_id': task.id,
-            'status': 'pending',
-            'message': f'异步任务已启动，正在获取最近 {limit} 个提交',
-            'data_type': 'recent_commits',
-            'params': {'limit': limit, 'include_details': include_details},
-            'check_url': f'/ai/task-status/{task.id}/'
-        }))
-        
-    except ValueError:
-        return JsonResponse(error_response(
-            'limit', 'Must be an integer'
-        ), status=400)
-    except Exception as e:
-        return JsonResponse(error_response(str(e)), status=500)
+    """快速启动异步获取最近提交的任务 (已废弃)"""
+    return JsonResponse(error_response(
+        'This API is deprecated. Only single commit processing is supported via webhook events.', 
+        400
+    ), status=400)
 
 
 @require_GET
@@ -381,58 +298,21 @@ def get_commit_details_async_start(request):
 @require_POST
 @csrf_exempt
 def start_ollama_analysis_api(request):
-    """启动Ollama分析任务"""
-    try:
-        data = json.loads(request.body)
-        commit_shas = data.get('commit_shas')  # 可选，指定要分析的提交SHA列表
-        
-        # 启动异步分析任务
-        task = start_ollama_analysis(commit_shas)
-        
-        logger.info(f"启动Ollama分析任务: {task.id}")
-        
-        return JsonResponse(success_response({
-            'task_id': task.id,
-            'message': f'Ollama分析任务已启动',
-            'target_commits': len(commit_shas) if commit_shas else '所有未分析提交',
-            'check_url': f'/ai/task-status/{task.id}/'
-        }))
-        
-    except json.JSONDecodeError:
-        return JsonResponse(error_response('Invalid JSON payload', 400), status=400)
-    except Exception as e:
-        logger.error(f"启动Ollama分析任务失败: {e}")
-        return JsonResponse(error_response(str(e), 500), status=500)
+    """启动Ollama分析任务 (已废弃)"""
+    return JsonResponse(error_response(
+        'This API is deprecated. Ollama analysis is now automatically triggered by webhook events.', 
+        400
+    ), status=400)
 
 
 @require_POST
 @csrf_exempt
 def analyze_single_commit_api(request):
-    """分析单个提交"""
-    try:
-        data = json.loads(request.body)
-        commit_sha = data.get('commit_sha', '').strip()
-        
-        if not commit_sha:
-            return JsonResponse(error_response("Missing required parameter: commit_sha", 400), status=400)
-        
-        # 启动单个提交分析任务
-        task = start_single_commit_analysis(commit_sha)
-        
-        logger.info(f"启动单个提交分析任务: {task.id}, 提交: {commit_sha[:8]}")
-        
-        return JsonResponse(success_response({
-            'task_id': task.id,
-            'commit_sha': commit_sha,
-            'message': f'单个提交分析任务已启动',
-            'check_url': f'/ai/task-status/{task.id}/'
-        }))
-        
-    except json.JSONDecodeError:
-        return JsonResponse(error_response('Invalid JSON payload', 400), status=400)
-    except Exception as e:
-        logger.error(f"启动单个提交分析失败: {e}")
-        return JsonResponse(error_response(str(e), 500), status=500)
+    """分析单个提交 (已废弃)"""
+    return JsonResponse(error_response(
+        'This API is deprecated. Single commit analysis is now automatically triggered by webhook events.', 
+        400
+    ), status=400)
 
 
 @require_GET

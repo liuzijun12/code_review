@@ -195,6 +195,156 @@ def auto_push_after_ollama(ollama_task_result):
         }
 
 
+@shared_task(name='app_ai.tasks.async_push.push_single_analysis_result')
+def push_single_analysis_result(analysis_data):
+    """
+    推送单个分析结果到企业微信（不依赖数据库）
+    
+    Args:
+        analysis_data: 包含分析结果的字典
+        
+    Returns:
+        dict: 推送结果
+    """
+    try:
+        start_time = timezone.now()
+        logger.info("开始推送单个分析结果到企业微信")
+        
+        # 验证必要字段
+        required_fields = ['commit_sha', 'commit_message', 'author_name', 'analysis_suggestion']
+        for field in required_fields:
+            if not analysis_data.get(field):
+                logger.error(f"分析数据缺少必要字段: {field}")
+                return {
+                    'status': 'error',
+                    'message': f'分析数据缺少必要字段: {field}',
+                    'execution_time': (timezone.now() - start_time).total_seconds()
+                }
+        
+        # 初始化推送器
+        pusher = WeChatWorkPusher()
+        
+        # 格式化消息
+        commit_sha = analysis_data['commit_sha']
+        message = _format_single_analysis_message(analysis_data)
+        
+        if not message:
+            logger.error(f"消息格式化失败: {commit_sha[:8]}")
+            return {
+                'status': 'error',
+                'message': '消息格式化失败',
+                'execution_time': (timezone.now() - start_time).total_seconds()
+            }
+        
+        # 发送消息
+        success = pusher.send_message(message)
+        
+        if success:
+            logger.info(f"单个分析结果推送成功: {commit_sha[:8]}")
+            return {
+                'status': 'success',
+                'message': f'提交 {commit_sha[:8]} 分析结果推送成功',
+                'commit_sha': commit_sha,
+                'pushed_count': 1,
+                'execution_time': (timezone.now() - start_time).total_seconds()
+            }
+        else:
+            logger.error(f"单个分析结果推送失败: {commit_sha[:8]}")
+            return {
+                'status': 'error',
+                'message': f'提交 {commit_sha[:8]} 分析结果推送失败',
+                'commit_sha': commit_sha,
+                'execution_time': (timezone.now() - start_time).total_seconds()
+            }
+            
+    except Exception as e:
+        error_msg = f"推送单个分析结果异常: {str(e)}"
+        logger.error(error_msg)
+        return {
+            'status': 'error',
+            'message': error_msg,
+            'error': str(e),
+            'execution_time': (timezone.now() - start_time).total_seconds() if 'start_time' in locals() else 0
+        }
+
+
+def _format_single_analysis_message(analysis_data):
+    """格式化单个分析结果消息"""
+    try:
+        commit_sha = analysis_data['commit_sha']
+        repository_name = analysis_data.get('repository_name', 'Unknown Repository')
+        commit_message = analysis_data['commit_message']
+        author_name = analysis_data['author_name']
+        commit_date = analysis_data.get('commit_date', 'Unknown Date')
+        modified_files = analysis_data.get('modified_files', [])
+        stats = analysis_data.get('stats', {})
+        commit_url = analysis_data.get('commit_url', '')
+        analysis_suggestion = analysis_data['analysis_suggestion']
+        
+        # 构造文件变更信息
+        files_info = ""
+        if modified_files:
+            files_info = "\n**📁 修改文件:**\n"
+            for file_info in modified_files[:5]:  # 最多显示5个文件
+                filename = file_info.get('filename', 'Unknown')
+                status = file_info.get('status', 'modified')
+                additions = file_info.get('additions', 0)
+                deletions = file_info.get('deletions', 0)
+                
+                status_emoji = {'added': '➕', 'removed': '➖', 'modified': '📝'}.get(status, '📝')
+                files_info += f"- {status_emoji} `{filename}` (+{additions}/-{deletions})\n"
+            
+            if len(modified_files) > 5:
+                files_info += f"- ... 还有 {len(modified_files) - 5} 个文件\n"
+        
+        # 构造统计信息
+        stats_info = ""
+        if stats:
+            total_additions = stats.get('total_additions', 0)
+            total_deletions = stats.get('total_deletions', 0)
+            files_changed = stats.get('files_changed', 0)
+            stats_info = f"\n**📊 变更统计:** {files_changed} 个文件，+{total_additions}/-{total_deletions}\n"
+        
+        # 格式化时间
+        try:
+            from datetime import datetime
+            commit_datetime = datetime.fromisoformat(commit_date.replace('Z', '+00:00'))
+            formatted_date = commit_datetime.strftime('%Y-%m-%d %H:%M:%S')
+        except:
+            formatted_date = commit_date
+        
+        # 构造完整消息内容
+        markdown_content = f"""# 🤖 代码审查报告
+
+**📦 仓库:** {repository_name}
+**👤 作者:** {author_name}
+**🕐 时间:** {formatted_date}
+**🔗 链接:** [查看提交]({commit_url})
+
+## 📝 提交信息
+```
+{commit_message}
+```
+
+## 🔍 AI 分析建议
+{analysis_suggestion}
+{files_info}{stats_info}
+---
+*提交 SHA: `{commit_sha[:8]}...`*"""
+
+        # 返回企业微信 Markdown 消息格式
+        return {
+            "msgtype": "markdown",
+            "markdown": {
+                "content": markdown_content.strip()
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"格式化消息异常: {e}")
+        return None
+
+
 @shared_task(name='app_ai.tasks.async_push.manual_push_all')
 def manual_push_all(delay_seconds=3):
     """

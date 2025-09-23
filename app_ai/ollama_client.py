@@ -554,12 +554,14 @@ class OllamaClient:
         
         return result
     
-    def explain_commit(self, commit_data: Dict[str, Any], model_name: str = None) -> Dict[str, Any]:
+    def explain_commit(self, commit_message: str, code_diff: str, author_name: str = None, model_name: str = None) -> Dict[str, Any]:
         """
-        解释提交内容
+        解释提交内容 - 简化版本，直接接受参数
         
         Args:
-            commit_data: 提交数据，包含提交信息和代码变更
+            commit_message: 提交消息
+            code_diff: 代码差异
+            author_name: 提交作者（可选）
             model_name: 使用的模型名称，默认使用配置中的提交分析模型
             
         Returns:
@@ -567,40 +569,32 @@ class OllamaClient:
         """
         model_name = model_name or self.config.default_commit_analysis_model
         
-        commit_message = commit_data.get('message', '')
-        files_changed = commit_data.get('files', [])
+        # 限制代码差异长度
+        if len(code_diff) > self.config.max_code_length:
+            logger.warning(f"代码差异长度 ({len(code_diff)}) 超过限制 ({self.config.max_code_length})")
+            code_diff = code_diff[:self.config.max_code_length] + "\n...[内容被截断]"
         
-        # 限制文件数量
-        if len(files_changed) > self.config.max_commit_files:
-            logger.warning(f"提交文件数 ({len(files_changed)}) 超过限制 ({self.config.max_commit_files})")
-            files_changed = files_changed[:self.config.max_commit_files]
-        
-        files_info = []
-        for file_data in files_changed:
-            files_info.append(f"文件: {file_data.get('filename', '')}")
-            files_info.append(f"状态: {file_data.get('status', '')}")
-            files_info.append(f"修改: +{file_data.get('additions', 0)} -{file_data.get('deletions', 0)}")
-            if 'patch' in file_data:
-                # 限制patch长度
-                patch = file_data['patch']
-                if len(patch) > 500:
-                    patch = patch[:500] + "..."
-                files_info.append(f"代码变更:\n{patch}")
-            files_info.append("---")
+        # 构造分析提示
+        author_info = f"\n作者: {author_name}" if author_name else ""
         
         prompt = f"""
-请分析以下Git提交，并提供详细的解释：
+请分析以下Git提交，并提供详细的代码审查建议：
 
-提交信息: {commit_message}
+提交信息: {commit_message}{author_info}
 
-文件变更:
-{chr(10).join(files_info)}
+代码变更:
+```diff
+{code_diff}
+```
 
-请解释：
-1. 这个提交做了什么？
-2. 代码变更的目的和影响
-3. 是否存在潜在问题
-4. 建议和改进点
+请从以下几个方面进行分析：
+1. **功能分析**: 这个提交实现了什么功能？
+2. **代码质量**: 代码是否规范，有无潜在问题？
+3. **安全性**: 是否存在安全隐患？
+4. **性能影响**: 对系统性能是否有影响？
+5. **改进建议**: 有什么可以优化的地方？
+
+请提供简洁但详细的分析结果。
 """
         
         # 验证总内容长度
@@ -623,18 +617,17 @@ class OllamaClient:
         ]
         
         if self.config.debug_mode:
-            logger.info(f"开始提交分析，文件数: {len(files_changed)}, 模型: {model_name}")
+            logger.info(f"开始提交分析，代码长度: {len(code_diff)}, 模型: {model_name}")
         
         result = self.chat(model_name, messages)
         
         if result['status'] == 'success':
             result['analysis_type'] = 'commit_explanation'
-            result['commit_sha'] = commit_data.get('sha', '')
-            result['files_count'] = len(files_changed)
+            result['commit_sha'] = ''  # 不再需要，调用方会处理
             result['model_used'] = model_name
             result['config_limits'] = {
-                'max_commit_files': self.config.max_commit_files,
-                'max_prompt_length': self.config.max_prompt_length
+                'max_prompt_length': self.config.max_prompt_length,
+                'max_code_length': self.config.max_code_length
             }
             
             if self.config.debug_mode:
