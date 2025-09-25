@@ -508,20 +508,34 @@ class OllamaClient:
             }
         
         prompt = f"""
-请对以下代码进行详细的代码审查，包括但不限于：
+You are a senior code reviewer ensuring high standards of code quality and security.
+Here is the submitted code：{code_content}
+When invoked:
 
-1. 代码质量和风格
-2. 潜在的bug和安全问题
-3. 性能优化建议
-4. 最佳实践建议
-5. 可维护性和可读性
+1. Run git diff to see recent changes
+2. Focus on modified files
+3. Begin review immediately
 
-代码内容：
-```
-{code_content}
-```
+Review checklist:
 
-请提供详细的分析和具体的改进建议。
+- Code is simple and readable
+- Functions and variables are well-named
+- No duplicated code
+- Proper error handling
+- No exposed secrets or API keys
+- Input validation implemented
+- Good test coverage
+- Performance considerations addressed
+
+Provide feedback organized by priority:
+
+- Critical issues (must fix)
+- Warnings (should fix)
+- Suggestions (consider improving)
+
+Include specific examples of how to fix issues.
+
+Finally answer me in Chinese
 """
         
         messages = [
