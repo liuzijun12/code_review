@@ -1,6 +1,7 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods, require_GET, require_POST
+from django.utils import timezone
 import json
 from .git_client import GitHubWebhookClient, GitHubDataClient
 from .schemas import is_valid_async_data_type, ASYNC_DATA_TYPES, success_response, error_response
@@ -351,6 +352,98 @@ def get_unanalyzed_commits_api(request):
     except Exception as e:
         logger.error(f"获取未分析提交失败: {e}")
         return JsonResponse(error_response(str(e), 500), status=500)
+
+
+# ==================== 健康检查接口 ====================
+
+@require_GET
+def health_check(request):
+    """
+    系统健康检查接口
+    用于 Docker 容器健康检查和负载均衡器状态检测
+    """
+    try:
+        health_status = {
+            'status': 'healthy',
+            'timestamp': timezone.now().isoformat(),
+            'services': {}
+        }
+        
+        # 检查数据库连接
+        try:
+            from django.db import connection
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                health_status['services']['database'] = 'healthy'
+        except Exception as e:
+            health_status['services']['database'] = f'unhealthy: {str(e)}'
+            health_status['status'] = 'degraded'
+        
+        # 检查 Redis 连接 (Celery)
+        try:
+            from celery import current_app
+            inspect = current_app.control.inspect()
+            stats = inspect.stats()
+            if stats:
+                health_status['services']['redis'] = 'healthy'
+                health_status['services']['celery_workers'] = len(stats)
+            else:
+                health_status['services']['redis'] = 'healthy'
+                health_status['services']['celery_workers'] = 0
+        except Exception as e:
+            health_status['services']['redis'] = f'unhealthy: {str(e)}'
+            health_status['services']['celery_workers'] = 0
+            health_status['status'] = 'degraded'
+        
+        # 检查 Ollama 服务
+        try:
+            from .ollama_client import OllamaClient
+            ollama_client = OllamaClient()
+            # 简单的健康检查，不进行实际的模型调用
+            models = ollama_client.list_models()
+            if models.get('status') == 'success':
+                health_status['services']['ollama'] = 'healthy'
+                health_status['services']['ollama_models'] = len(models.get('models', []))
+            else:
+                health_status['services']['ollama'] = 'unhealthy'
+                health_status['status'] = 'degraded'
+        except Exception as e:
+            health_status['services']['ollama'] = f'unhealthy: {str(e)}'
+            health_status['status'] = 'degraded'
+        
+        # 检查磁盘空间
+        try:
+            import shutil
+            disk_usage = shutil.disk_usage('/')
+            free_space_gb = disk_usage.free / (1024**3)
+            health_status['services']['disk_space'] = f'{free_space_gb:.2f}GB free'
+            if free_space_gb < 1:  # 少于1GB时标记为不健康
+                health_status['status'] = 'degraded'
+        except Exception as e:
+            health_status['services']['disk_space'] = f'unknown: {str(e)}'
+        
+        # 根据整体状态设置 HTTP 状态码
+        if health_status['status'] == 'healthy':
+            return JsonResponse(success_response(health_status))
+        else:
+            return JsonResponse(success_response(health_status), status=503)  # Service Unavailable
+            
+    except Exception as e:
+        logger.error(f"健康检查失败: {e}")
+        return JsonResponse(error_response(f'Health check failed: {str(e)}', 500), status=500)
+
+
+@require_GET
+def health_simple(request):
+    """
+    简单的健康检查接口 - 仅检查应用是否运行
+    用于快速的存活性检查
+    """
+    return JsonResponse(success_response({
+        'status': 'ok',
+        'timestamp': timezone.now().isoformat(),
+        'message': 'Application is running'
+    }))
 
 
 # ==================== 推送接口 ====================

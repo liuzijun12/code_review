@@ -26,4 +26,8 @@ urlpatterns = [
     # 推送接口
     path('push-results/', views.start_push_task_api, name='start_push_task'),  # POST - 启动推送任务
     path('unpushed-commits/', views.get_unpushed_commits_api, name='get_unpushed_commits'), # GET - 获取未推送提交
+    
+    # 健康检查接口
+    path('health/', views.health_check, name='health_check'),  # GET - 完整健康检查
+    path('health/simple/', views.health_simple, name='health_simple'),  # GET - 简单健康检查
 ]

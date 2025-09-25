@@ -1,28 +1,166 @@
-version: '3.8'
-
 services:
+  # MySQL 数据库
+  mysql:
+    image: mysql:8.0
+    container_name: code_review_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: code_review
+      MYSQL_ALLOW_EMPTY_PASSWORD: "no"
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    networks:
+      - code_review_net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p123456"]
+      timeout: 20s
+      retries: 10
+      interval: 30s
+
+  # Redis 缓存和消息队列
+  redis:
+    image: redis:7-alpine
+    container_name: code_review_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - code_review_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Ollama AI 服务 (优先启动，支持GPU)
   ollama:
     image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - "11434:11434"
+    container_name: code_review_ollama
+    restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
     environment:
       - OLLAMA_HOST=0.0.0.0
-    restart: unless-stopped
-    # 如果您有GPU，可以取消注释以下行
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    networks:
+      - code_review_net
+    # GPU 支持 (如果有 GPU，会自动启用)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
+  # Django 应用
+  django:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    image: code_review_django:latest
+    container_name: code_review_django
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Docker 环境特定配置
+      - DB_HOST=mysql
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    command: >
+      sh -c "
+        echo '🚀 Starting Django application...' &&
+        python manage.py migrate &&
+        python manage.py collectstatic --noinput &&
+        gunicorn code_review.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120
+      "
+    volumes:
+      - ./.env:/app/.env:ro
+      - static_volume:/app/staticfiles
+      - ./logs:/app/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      - code_review_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/ai/health/simple/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Celery Worker - 异步任务处理
+  celery_worker:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    image: code_review_django:latest
+    container_name: code_review_celery_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Docker 环境特定配置
+      - DB_HOST=mysql
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    command: >
+      sh -c "
+        echo 'Waiting for Django to initialize...' &&
+        sleep 15 &&
+        echo 'Starting Celery Worker...' &&
+        celery -A code_review worker --loglevel=info --pool=threads --concurrency=2
+      "
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      django:
+        condition: service_healthy
+    networks:
+      - code_review_net
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A code_review inspect ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Open WebUI - Ollama 管理界面 (可选)
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
-    container_name: openwebui
+    container_name: code_review_openwebui
+    restart: unless-stopped
     ports:
       - "3000:8080"
     volumes:
@@ -30,9 +168,60 @@ services:
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
     depends_on:
-      - ollama
-    restart: unless-stopped
+      ollama:
+        condition: service_healthy
+    networks:
+      - code_review_net
 
+  # Flower - Celery 监控界面 (可选)
+  flower:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    image: code_review_django:latest
+    container_name: code_review_flower
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Docker 环境特定配置
+      - DB_HOST=mysql
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    command: >
+      sh -c "
+        echo 'Waiting for services to initialize...' &&
+        sleep 20 &&
+        echo 'Starting Flower monitoring...' &&
+        celery -A code_review flower --port=5555 --broker=redis://redis:6379/0
+      "
+    volumes:
+      - ./.env:/app/.env:ro
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+      django:
+        condition: service_healthy
+    networks:
+      - code_review_net
+
+# 数据卷
 volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
   ollama_data:
+    driver: local
   openwebui_data:
+    driver: local
+  static_volume:
+    driver: local
+
+# 网络
+networks:
+  code_review_net:
+    driver: bridge
