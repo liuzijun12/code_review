@@ -128,7 +128,10 @@ start /b docker pull ghcr.io/open-webui/open-webui:main
 timeout /t 5 /nobreak >nul
 
 echo 🔨 构建并启动服务...
-docker-compose -f !COMPOSE_FILE! up --build -d
+echo 🏗️  Step 1: 构建镜像...
+docker-compose -f !COMPOSE_FILE! build
+echo 🚀 Step 2: 启动服务...
+docker-compose -f !COMPOSE_FILE! up -d
 
 :: 检查启动状态
 echo.

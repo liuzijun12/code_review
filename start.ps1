@@ -167,7 +167,10 @@ foreach ($image in $images) {
 $jobs | Wait-Job | Remove-Job
 
 Write-Host "🔨 构建并启动服务..." -ForegroundColor Blue
-& docker-compose -f $ComposeFile up --build -d
+Write-Host "🏗️  Step 1: 构建镜像..." -ForegroundColor Yellow
+& docker-compose -f $ComposeFile build
+Write-Host "🚀 Step 2: 启动服务..." -ForegroundColor Yellow
+& docker-compose -f $ComposeFile up -d
 
 # 检查启动状态
 Write-Host ""

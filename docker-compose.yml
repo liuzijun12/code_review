@@ -78,6 +78,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: code_review_django:latest
+    pull_policy: never
     container_name: code_review_django
     restart: unless-stopped
     env_file:
@@ -123,6 +124,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: code_review_django:latest
+    pull_policy: never
     container_name: code_review_celery_worker
     restart: unless-stopped
     env_file:
@@ -182,6 +184,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: code_review_django:latest
+    pull_policy: never
     container_name: code_review_flower
     restart: unless-stopped
     env_file:
