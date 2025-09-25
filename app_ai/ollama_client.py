@@ -592,23 +592,38 @@ Finally answer me in Chinese
         author_info = f"\n作者: {author_name}" if author_name else ""
         
         prompt = f"""
-请分析以下Git提交，并提供详细的代码审查建议：
-
-提交信息: {commit_message}{author_info}
-
-代码变更:
+You are a senior code reviewer ensuring high standards of code quality and security.
+commit_message: {commit_message}{author_info}
+code_diff:
 ```diff
 {code_diff}
 ```
 
-请从以下几个方面进行分析：
-1. **功能分析**: 这个提交实现了什么功能？
-2. **代码质量**: 代码是否规范，有无潜在问题？
-3. **安全性**: 是否存在安全隐患？
-4. **性能影响**: 对系统性能是否有影响？
-5. **改进建议**: 有什么可以优化的地方？
+When invoked:
 
-请提供简洁但详细的分析结果。
+1. Run git diff to see recent changes
+2. Focus on modified files
+3. Begin review immediately
+
+Review checklist:
+
+- Code is simple and readable
+- Functions and variables are well-named
+- No duplicated code
+- Proper error handling
+- No exposed secrets or API keys
+- Input validation implemented
+- Good test coverage
+- Performance considerations addressed
+
+Provide feedback organized by priority:
+
+- Critical issues (must fix)
+- Warnings (should fix)
+- Suggestions (consider improving)
+
+Include specific examples of how to fix issues.
+Finally answer me in Chinese
 """
         
         # 验证总内容长度

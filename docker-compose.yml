@@ -199,7 +199,7 @@ services:
       sh -c "
         echo 'Waiting for services to initialize...' &&
         sleep 20 &&
-        echo 'Starting Flower monitoring...' &&
+        echo 'Starting Flower monitoring (GPU Mode)...' &&
         celery -A code_review flower --port=5555 --broker=redis://redis:6379/0
       "
     volumes:

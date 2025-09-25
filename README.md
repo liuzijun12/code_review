@@ -56,16 +56,22 @@ graph TB
 - 🎯 **GPU 加速**: Linux + NVIDIA GPU + Container Toolkit
 - 🖥️ **CPU 兼容**: Mac/Windows/无GPU Linux 系统
 - 🚀 **智能检测**: 自动选择最佳运行模式
+- 🪟 **Windows 优化**: 专门的批处理脚本，无需额外配置
 
 ## 🚀 快速开始
 
 ### 方式一：Docker 部署（推荐）
 
 **前置要求**
-- Docker 20.10+
+- Docker 20.10+ 
 - Docker Compose 2.0+
 - 至少 4GB 可用内存
 - 至少 10GB 可用磁盘空间
+
+**系统支持：**
+- ✅ **Linux** (Ubuntu 18.04+, CentOS 7+, 其他发行版)
+- ✅ **macOS** (10.15+, Intel/Apple Silicon)
+- ✅ **Windows** (Windows 10/11 + Docker Desktop)
 
 **1. 克隆项目**
 ```bash
@@ -96,15 +102,17 @@ WX_WEBHOOK_URL=your_wechat_webhook_url
 
 **3. 选择部署模式**
 
-系统提供了三种启动方式：
+系统提供了多种启动方式，支持不同操作系统：
 
 | 启动方式 | 配置文件 | 适用场景 | 性能 |
 |---------|----------|----------|------|
-| 🚀 **智能启动** | `./start.sh` | 自动检测环境 | 最优 |
+| 🚀 **智能启动** | `./start.sh` / `start.bat` | 自动检测环境 | 最优 |
 | 🎯 **GPU 模式** | `docker-compose.yml` | Linux + NVIDIA GPU | 高性能 |
 | 🖥️ **CPU 模式** | `docker-compose.cpu.yml` | Mac/Windows/无GPU | 兼容性好 |
 
 **方式 A: 智能启动（推荐）**
+
+**Linux/Mac 系统：**
 ```bash
 # 一键启动，自动检测并选择最佳配置
 ./start.sh
@@ -113,6 +121,17 @@ WX_WEBHOOK_URL=your_wechat_webhook_url
 ./start.sh gpu    # 强制 GPU 模式
 ./start.sh cpu    # 强制 CPU 模式
 ./start.sh help   # 查看帮助
+```
+
+**Windows 系统：**
+```cmd
+# 双击运行 start.bat 文件，或在命令行中执行：
+start.bat
+
+# 或者手动指定模式
+start.bat gpu     # 强制 GPU 模式
+start.bat cpu     # 强制 CPU 模式
+start.bat help    # 查看帮助
 ```
 
 **方式 B: 手动选择模式**
@@ -343,6 +362,7 @@ curl "http://localhost:8000/ai/health/"
 
 ### 服务监控
 
+**Linux/Mac 系统：**
 ```bash
 # 查看所有容器状态（根据使用的配置文件）
 docker-compose ps                                    # GPU 模式
@@ -356,16 +376,39 @@ docker-compose -f docker-compose.cpu.yml logs -f django  # CPU 模式
 docker-compose restart django                      # GPU 模式
 docker-compose -f docker-compose.cpu.yml restart django  # CPU 模式
 
+# 使用智能启动脚本的用户可以查看启动日志获取使用的配置文件
+./start.sh | grep "使用配置文件"
+```
+
+**Windows 系统：**
+```cmd
+# 查看所有容器状态
+docker-compose ps
+
+# 查看特定服务日志
+docker-compose logs -f django
+
+# 重启服务
+docker-compose restart django
+
+# 使用智能启动脚本查看配置
+start.bat | findstr "使用配置文件"
+```
+
+**通用命令（所有系统）：**
+```bash
 # 进入容器调试
 docker exec -it code_review_django bash
 
-# 使用智能启动脚本的用户可以查看启动日志获取使用的配置文件
-./start.sh | grep "使用配置文件"
+# 检查容器状态
+docker ps --filter "name=code_review"
 ```
 
 ### 系统状态检查
 
 **快速诊断脚本**
+
+**Linux/Mac 系统 (check_system.sh):**
 ```bash
 #!/bin/bash
 # 保存为 check_system.sh 并执行 chmod +x check_system.sh
@@ -400,6 +443,63 @@ echo -e "\n--- Ollama ---"
 docker-compose logs --tail=10 ollama
 ```
 
+**Windows 系统 (check_system.bat):**
+```cmd
+@echo off
+chcp 65001 >nul
+
+echo 🔍 Code Review System 状态检查
+echo ================================
+
+echo 📋 Docker 容器状态:
+docker-compose ps
+
+echo.
+echo 🌐 服务连通性检查:
+
+curl -s http://localhost:8000/ai/health/ >nul 2>&1
+if %errorlevel% equ 0 (
+    echo ✅ Django 主应用: 正常
+) else (
+    echo ❌ Django 主应用: 异常
+)
+
+curl -s http://localhost:11434/api/tags >nul 2>&1
+if %errorlevel% equ 0 (
+    echo ✅ Ollama AI: 正常
+) else (
+    echo ❌ Ollama AI: 异常
+)
+
+docker exec code_review_redis redis-cli ping >nul 2>&1
+if %errorlevel% equ 0 (
+    echo ✅ Redis: 正常
+) else (
+    echo ❌ Redis: 异常
+)
+
+docker exec code_review_mysql mysqladmin ping -h localhost -u root -p123456 >nul 2>&1
+if %errorlevel% equ 0 (
+    echo ✅ MySQL: 正常
+) else (
+    echo ❌ MySQL: 异常
+)
+
+echo.
+echo 📊 资源使用情况:
+docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"
+
+echo.
+echo 📝 最近日志 (最后10行):
+echo --- Django ---
+docker-compose logs --tail=10 django
+echo.
+echo --- Ollama ---
+docker-compose logs --tail=10 ollama
+
+pause
+```
+
 **详细系统检查**
 ```bash
 # 检查系统状态（容器内）
@@ -415,6 +515,46 @@ docker exec -it code_review_ollama ollama list
 ## 🛠️ 故障排除
 
 ### 常见问题
+
+<details>
+<summary><strong>🔴 Windows Docker 构建失败</strong></summary>
+
+**问题描述**: Windows 上出现 `failed to execute bake: read |0: file already closed`
+
+**解决方案**:
+```cmd
+# 方案 1: 使用修复后的启动脚本（推荐）
+start.bat
+
+# 方案 2: 手动分步构建
+docker build -t code_review_django:latest .
+docker-compose up -d
+
+# 方案 3: 如果仍有问题，清理 Docker 缓存
+docker system prune -f
+docker-compose down --volumes
+start.bat
+```
+
+</details>
+
+<details>
+<summary><strong>🔴 Windows 路径问题</strong></summary>
+
+**问题描述**: 挂载路径错误或权限问题
+
+**解决方案**:
+```cmd
+# 确保在项目根目录执行
+cd D:\your\path\to\code_review
+start.bat
+
+# 检查 Docker Desktop 共享设置
+# 打开 Docker Desktop → Settings → Resources → File Sharing
+# 确保项目所在盘符已共享
+```
+
+</details>
 
 <details>
 <summary><strong>🔴 Docker 构建网络超时</strong></summary>
@@ -591,10 +731,12 @@ ports:
 code_review/
 ├── 🐳 docker-compose.yml      # Docker 服务编排 (GPU 模式)
 ├── 🐳 docker-compose.cpu.yml  # Docker 服务编排 (CPU 模式)
-├── 🚀 start.sh                # 智能启动脚本
+├── 🚀 start.sh                # 智能启动脚本 (Linux/Mac)
+├── 🪟 start.bat               # 智能启动脚本 (Windows)
 ├── 🐳 Dockerfile              # Django 应用镜像
 ├── 📋 requirement.txt         # Python 依赖
 ├── 🔧 example.env             # 环境变量模板
+├── 📚 DEPLOYMENT.md           # 部署指南
 ├── 
 ├── code_review/               # Django 项目配置
 │   ├── ⚙️  settings.py        # 项目设置
