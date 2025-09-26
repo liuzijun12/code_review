@@ -5,10 +5,7 @@ from django.utils import timezone
 import json
 from .git_client import GitHubWebhookClient, GitHubDataClient
 from .schemas import is_valid_async_data_type, ASYNC_DATA_TYPES, success_response, error_response
-from .sql_client import DatabaseClient
-# from .service import process_webhook_event  # 不再使用同步处理
 from .tasks.async_get import fetch_github_data_async
-# from .tasks.async_ollama import start_ollama_analysis, start_single_commit_analysis  # 不再需要，现在自动触发
 from .tasks.async_push import start_push_task
 from celery.result import AsyncResult
 import logging
@@ -24,8 +21,22 @@ def git_webhook(request):
     """GitHub webhook处理器 - 异步版本"""
     # import pdb
     # pdb.set_trace()
+    try:
+        import json
+        body = request.body.decode('utf-8')
+        payload_data = json.loads(body)
+        
+        # 提取仓库信息
+        repo_info = payload_data.get('repository', {})
+        repo_name = repo_info.get('name')
+        repo_owner = repo_info.get('owner', {}).get('login')
+        
+    except (json.JSONDecodeError, AttributeError):
+        repo_name = None
+        repo_owner = None
+    
     github_client = GitHubWebhookClient()
-    is_valid, error_response_data, payload = github_client.validate_webhook_request(request)
+    is_valid, error_response_data, payload = github_client.validate_webhook_request(request, repo_owner, repo_name)
     
     if not is_valid:
         return error_response_data
@@ -52,6 +63,8 @@ def git_webhook(request):
             # 启动异步GitHub数据获取任务 - 只处理单个提交
             task = fetch_github_data_async.delay(
                 data_type='commit_details',
+                repo_owner=repo_owner,
+                repo_name=repo_name,
                 sha=latest_sha,
                 include_diff=True
             )
@@ -104,6 +117,10 @@ def get_github_data(request):
             f'Invalid data type. Must be one of: {", ".join(ASYNC_DATA_TYPES)}', 400
         ), status=400)
     
+    # 获取仓库信息
+    repo_owner = request.GET.get('repo_owner', '').strip()
+    repo_name = request.GET.get('repo_name', '').strip()
+    
     # 简化参数处理，只获取基本参数
     params = {
         'branch': request.GET.get('branch', 'main'),
@@ -112,7 +129,8 @@ def get_github_data(request):
         'include_diff': request.GET.get('include_diff', 'true').lower() == 'true'
     }
     
-    data_client = GitHubDataClient()
+    # 使用仓库信息创建客户端
+    data_client = GitHubDataClient(repo_owner=repo_owner, repo_name=repo_name)
     result = data_client.get_data(data_type, **params)
     
     if result.get('status') == 'error':
@@ -160,11 +178,11 @@ def _save_single_commit(result):
                 'parents': commit_detail.get('parents', [])
             }
             
-            success, message, commit_obj = DatabaseClient.save_commit_to_database(github_data)
+            # 数据库保存功能已移除
             result['database_save'] = {
-                'success': success,
-                'message': message,
-                'commit_saved': commit_obj.commit_sha[:8] if commit_obj else None
+                'success': True,
+                'message': '数据库保存功能已禁用',
+                'commit_saved': None
             }
             
     except Exception as e:
@@ -200,8 +218,17 @@ def get_github_data_async(request):
                 f'Invalid data type. Must be one of: {", ".join(ASYNC_DATA_TYPES)}', 400
             ), status=400)
         
+        # 获取仓库信息
+        repo_owner = data.get('repo_owner', '').strip()
+        repo_name = data.get('repo_name', '').strip()
         params = data.get('params', {})
-        task = fetch_github_data_async.delay(data_type, **params)
+        
+        task = fetch_github_data_async.delay(
+            data_type, 
+            repo_owner=repo_owner, 
+            repo_name=repo_name, 
+            **params
+        )
         
         logger.info(f"启动异步GitHub数据获取任务: {task.id}, 类型: {data_type}")
         
@@ -276,8 +303,18 @@ def get_commit_details_async_start(request):
         if not sha:
             return JsonResponse(error_response("Missing required parameter: " + 'sha'), status=400)
         
+        # 获取仓库信息
+        repo_owner = request.GET.get('repo_owner', '').strip()
+        repo_name = request.GET.get('repo_name', '').strip()
+        
         include_diff = request.GET.get('include_diff', 'true').lower() == 'true'
-        task = fetch_github_data_async.delay('commit_details', sha=sha, include_diff=include_diff)
+        task = fetch_github_data_async.delay(
+            'commit_details', 
+            repo_owner=repo_owner, 
+            repo_name=repo_name, 
+            sha=sha, 
+            include_diff=include_diff
+        )
         
         logger.info(f"启动异步获取提交详情任务: {task.id}, sha={sha[:8]}")
         
@@ -324,27 +361,12 @@ def get_unanalyzed_commits_api(request):
         if limit < 1 or limit > 100:
             return JsonResponse(error_response('limit must be between 1 and 100', 400), status=400)
         
-        # 获取未分析的提交
-        unanalyzed_commits = DatabaseClient.get_unanalyzed_commits(limit)
-        
-        # 格式化返回数据
-        commits_data = []
-        for commit in unanalyzed_commits:
-            commits_data.append({
-                'commit_sha': commit['commit_sha'],
-                'short_sha': commit['commit_sha'][:8],
-                'author_name': commit['author_name'],
-                'commit_message': commit['commit_message'][:100] + '...' if len(commit['commit_message']) > 100 else commit['commit_message'],
-                'commit_timestamp': commit['commit_timestamp'],
-                'code_diff_length': len(commit.get('code_diff', '')),
-                'created_at': commit['created_at']
-            })
-        
+        # 功能已禁用 - 不再存储提交分析数据
         return JsonResponse(success_response({
-            'unanalyzed_commits': commits_data,
-            'count': len(commits_data),
+            'unanalyzed_commits': [],
+            'count': 0,
             'limit': limit,
-            'message': f'找到 {len(commits_data)} 个未分析的提交'
+            'message': '提交分析存储功能已禁用'
         }))
         
     except ValueError:
@@ -487,15 +509,8 @@ def get_unpushed_commits_api(request):
         if limit < 1 or limit > 100:
             return JsonResponse(error_response('limit must be between 1 and 100', 400), status=400)
         
-        # 获取未推送的分析结果
-        from app_ai.models import GitCommitAnalysis
-        
-        unpushed_records = GitCommitAnalysis.objects.filter(
-            analysis_suggestion__isnull=False,
-            is_push=0
-        ).exclude(
-            analysis_suggestion=''
-        ).order_by('commit_timestamp')[:limit]
+        # 数据库存储功能已禁用
+        unpushed_records = []
         
         # 格式化返回数据
         commits_data = []

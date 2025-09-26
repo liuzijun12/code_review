@@ -202,6 +202,8 @@ python manage.py migrate
 python manage.py createsuperuser
 
 # 5. 启动服务（需要多个终端）
+
+## Linux/Mac 系统：
 # 终端1: Django
 python manage.py runserver
 
@@ -209,6 +211,19 @@ python manage.py runserver
 celery -A code_review worker --loglevel=info
 
 # 终端3: Redis
+redis-server
+
+# 终端4: Ollama
+ollama serve
+
+## Windows 系统：
+# 终端1: Django
+python manage.py runserver
+
+# 终端2: Celery Worker (Windows)
+celery -A code_review worker --loglevel=info --pool=solo
+
+# 终端3: Redis (如果使用 Windows Redis)
 redis-server
 
 # 终端4: Ollama

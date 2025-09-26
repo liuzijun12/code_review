@@ -6,20 +6,21 @@ import logging
 import time
 from celery import shared_task
 from django.utils import timezone
-from ..sql_client import DatabaseClient
 from ..info_push import WeChatWorkPusher
 
 logger = logging.getLogger(__name__)
 
 
 @shared_task(name='app_ai.tasks.async_push.push_analysis_results')
-def push_analysis_results(ollama_task_result=None, delay_seconds=3):
+def push_analysis_results(ollama_task_result=None, delay_seconds=3, repo_owner=None, repo_name=None):
     """
     推送分析结果到企业微信
     
     Args:
         ollama_task_result: Ollama分析任务的结果
         delay_seconds: 多条消息之间的延迟时间（秒）
+        repo_owner: 仓库所有者用户名
+        repo_name: 仓库名称
         
     Returns:
         dict: 推送结果统计
@@ -28,16 +29,8 @@ def push_analysis_results(ollama_task_result=None, delay_seconds=3):
         start_time = timezone.now()
         logger.info("开始异步推送分析结果到企业微信")
         
-        # 获取需要推送的数据（已分析且未推送的记录）
-        from app_ai.models import GitCommitAnalysis
-        
-        # 查询条件：analysis_suggestion不为空且is_push为0
-        unpushed_records = GitCommitAnalysis.objects.filter(
-            analysis_suggestion__isnull=False,
-            is_push=0
-        ).exclude(
-            analysis_suggestion=''
-        ).order_by('commit_timestamp')  # 按提交时间排序，先提交的先发送
+        # 数据库存储功能已禁用
+        unpushed_records = []
         
         if not unpushed_records.exists():
             logger.info("没有需要推送的分析结果")
@@ -51,8 +44,8 @@ def push_analysis_results(ollama_task_result=None, delay_seconds=3):
         
         logger.info(f"找到 {unpushed_records.count()} 条需要推送的分析结果")
         
-        # 初始化推送器
-        pusher = WeChatWorkPusher()
+        # 初始化推送器（使用仓库信息）
+        pusher = WeChatWorkPusher(repo_owner=repo_owner, repo_name=repo_name)
         
         # 推送统计
         pushed_count = 0
@@ -149,12 +142,14 @@ def push_analysis_results(ollama_task_result=None, delay_seconds=3):
 
 
 @shared_task(name='app_ai.tasks.async_push.auto_push_after_ollama')
-def auto_push_after_ollama(ollama_task_result):
+def auto_push_after_ollama(ollama_task_result, repo_owner=None, repo_name=None):
     """
     Ollama分析完成后自动触发推送
     
     Args:
         ollama_task_result: Ollama分析任务的结果
+        repo_owner: 仓库所有者用户名
+        repo_name: 仓库名称
         
     Returns:
         dict: 推送结果
@@ -175,7 +170,7 @@ def auto_push_after_ollama(ollama_task_result):
         if analyzed_count > 0:
             logger.info(f"Ollama成功分析了 {analyzed_count} 个提交，开始推送")
             # 启动推送任务
-            return push_analysis_results(ollama_task_result, delay_seconds=3)
+            return push_analysis_results(ollama_task_result, delay_seconds=3, repo_owner=repo_owner, repo_name=repo_name)
         else:
             logger.info("Ollama没有成功分析任何提交，跳过推送")
             return {
@@ -196,12 +191,14 @@ def auto_push_after_ollama(ollama_task_result):
 
 
 @shared_task(name='app_ai.tasks.async_push.push_single_analysis_result')
-def push_single_analysis_result(analysis_data):
+def push_single_analysis_result(analysis_data, repo_owner=None, repo_name=None):
     """
     推送单个分析结果到企业微信（不依赖数据库）
     
     Args:
         analysis_data: 包含分析结果的字典
+        repo_owner: 仓库所有者用户名
+        repo_name: 仓库名称
         
     Returns:
         dict: 推送结果
@@ -221,8 +218,8 @@ def push_single_analysis_result(analysis_data):
                     'execution_time': (timezone.now() - start_time).total_seconds()
                 }
         
-        # 初始化推送器
-        pusher = WeChatWorkPusher()
+        # 初始化推送器（使用仓库信息）
+        pusher = WeChatWorkPusher(repo_owner=repo_owner, repo_name=repo_name)
         
         # 格式化消息
         commit_sha = analysis_data['commit_sha']
@@ -237,7 +234,7 @@ def push_single_analysis_result(analysis_data):
             }
         
         # 发送消息
-        success = pusher.send_message(message)
+        success = pusher.send_to_wechat(message)
         
         if success:
             logger.info(f"单个分析结果推送成功: {commit_sha[:8]}")
@@ -346,40 +343,46 @@ def _format_single_analysis_message(analysis_data):
 
 
 @shared_task(name='app_ai.tasks.async_push.manual_push_all')
-def manual_push_all(delay_seconds=3):
+def manual_push_all(delay_seconds=3, repo_owner=None, repo_name=None):
     """
     手动推送所有未推送的分析结果
     
     Args:
         delay_seconds: 多条消息之间的延迟时间（秒）
+        repo_owner: 仓库所有者用户名
+        repo_name: 仓库名称
         
     Returns:
         dict: 推送结果
     """
     logger.info("手动触发推送所有未推送的分析结果")
-    return push_analysis_results(ollama_task_result=None, delay_seconds=delay_seconds)
+    return push_analysis_results(ollama_task_result=None, delay_seconds=delay_seconds, repo_owner=repo_owner, repo_name=repo_name)
 
 
 # 便捷函数
-def start_push_task(delay_seconds=3):
+def start_push_task(delay_seconds=3, repo_owner=None, repo_name=None):
     """
     启动推送任务的便捷函数
     
     Args:
         delay_seconds: 多条消息之间的延迟时间（秒）
+        repo_owner: 仓库所有者用户名
+        repo_name: 仓库名称
         
     Returns:
         AsyncResult: 任务结果对象
     """
-    return manual_push_all.delay(delay_seconds)
+    return manual_push_all.delay(delay_seconds, repo_owner=repo_owner, repo_name=repo_name)
 
 
-def trigger_push_after_ollama(ollama_task_id):
+def trigger_push_after_ollama(ollama_task_id, repo_owner=None, repo_name=None):
     """
     在Ollama任务完成后触发推送的便捷函数
     
     Args:
         ollama_task_id: Ollama任务的ID
+        repo_owner: 仓库所有者用户名
+        repo_name: 仓库名称
         
     Returns:
         AsyncResult: 推送任务的结果对象
@@ -392,7 +395,7 @@ def trigger_push_after_ollama(ollama_task_id):
     if ollama_task.ready():
         # Ollama任务已完成，立即触发推送
         ollama_result = ollama_task.result
-        return auto_push_after_ollama.delay(ollama_result)
+        return auto_push_after_ollama.delay(ollama_result, repo_owner=repo_owner, repo_name=repo_name)
     else:
         # Ollama任务未完成，等待完成后触发
         logger.info(f"Ollama任务 {ollama_task_id} 未完成，等待完成后触发推送")

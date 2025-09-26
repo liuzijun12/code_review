@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand
 from django.conf import settings
 import redis
 from celery import current_app
-from app_ai.sql_client import DatabaseClient
+# DatabaseClient 已删除，不再需要数据库操作
 
 
 class Command(BaseCommand):
@@ -52,9 +52,8 @@ class Command(BaseCommand):
             )
             
             if verbose:
-                self.stdout.write(f'     - 总记录数: {stats.get("total_commits", 0)}')
-                self.stdout.write(f'     - 已分析记录: {stats.get("analyzed_commits", 0)}')
-                self.stdout.write(f'     - 未分析记录: {stats.get("unanalyzed_commits", 0)}')
+                self.stdout.write(f'     - 提交分析存储功能已禁用')
+                self.stdout.write(f'     - 使用新的仓库配置管理模式')
                 
         except Exception as e:
             self.stdout.write(

@@ -5,6 +5,7 @@ import hmac
 import logging
 import requests
 from django.http import JsonResponse, HttpResponseForbidden
+from .models import RepositoryConfig
 
 # 创建logger实例
 logger = logging.getLogger(__name__)
@@ -15,10 +16,55 @@ class GitHubWebhookClient:
     GitHub Webhook客户端，专门处理POST请求的webhook验证和事件处理
     """
     
-    def __init__(self):
-        self.webhook_secret = os.getenv('GITHUB_WEBHOOK_SECRET', '')
-        self.allowed_owner = os.getenv('REPO_OWNER', '').strip()
-        self.allowed_name = os.getenv('REPO_NAME', '').strip()
+    def __init__(self, repo_owner=None, repo_name=None):
+        """
+        初始化 GitHub Webhook 客户端
+        
+        Args:
+            repo_owner: 仓库所有者用户名
+            repo_name: 仓库名称
+        """
+        self.repo_owner = repo_owner
+        self.repo_name = repo_name
+        self.repo_config = None
+        
+        # 如果提供了仓库信息，尝试从数据库获取配置
+        if repo_owner and repo_name:
+            try:
+                self.repo_config = RepositoryConfig.objects.get(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    is_enabled=True
+                )
+                logger.info(f"✅ 加载仓库配置成功: {repo_owner}/{repo_name}")
+            except RepositoryConfig.DoesNotExist:
+                logger.warning(f"⚠️ 未找到仓库配置: {repo_owner}/{repo_name}")
+                self.repo_config = None
+            except Exception as e:
+                logger.error(f"❌ 加载仓库配置失败: {e}")
+                self.repo_config = None
+        
+        # 设置配置属性（优先使用数据库配置，否则使用环境变量）
+        if self.repo_config:
+            self.webhook_secret = self.repo_config.webhook_secret
+            self.allowed_owner = self.repo_config.repo_owner
+            self.allowed_name = self.repo_config.repo_name
+            self.github_token = self.repo_config.github_token
+            self.wechat_webhook_url = self.repo_config.wechat_webhook_url
+        else:
+            # 回退到环境变量配置
+            self.webhook_secret = os.getenv('GITHUB_WEBHOOK_SECRET', '')
+            self.allowed_owner = os.getenv('REPO_OWNER', '').strip()
+            self.allowed_name = os.getenv('REPO_NAME', '').strip()
+            self.github_token = os.getenv('GITHUB_TOKEN', '')
+            self.wechat_webhook_url = os.getenv('WX_WEBHOOK_URL', '')
+    
+    def is_repo_enabled(self):
+        """检查仓库是否启用"""
+        if self.repo_config:
+            return self.repo_config.is_enabled
+        # 环境变量模式下，如果配置了相关信息就认为是启用的
+        return bool(self.webhook_secret and self.allowed_owner and self.allowed_name)
     
     def verify_signature(self, payload_body, signature_header):
         """
@@ -43,6 +89,38 @@ class GitHubWebhookClient:
         # 计算预期签名
         expected_signature = hmac.new(
             self.webhook_secret.encode('utf-8'),
+            payload_body,
+            hashlib.sha256
+        ).hexdigest()
+        
+        # 安全比较签名
+        is_valid = hmac.compare_digest(received_signature, expected_signature)
+        return is_valid
+    
+    def _verify_signature_with_secret(self, payload_body, signature_header, webhook_secret):
+        """
+        使用指定的密钥验证GitHub webhook签名
+        
+        Args:
+            payload_body: 请求体内容
+            signature_header: GitHub发送的签名头
+            webhook_secret: 用于验证的密钥
+            
+        Returns:
+            bool: 签名验证结果
+        """
+        if not webhook_secret:
+            return False
+            
+        if not signature_header.startswith('sha256='):
+            return False
+        
+        # 提取签名
+        received_signature = signature_header[7:]  # 移除 'sha256=' 前缀
+        
+        # 计算预期签名
+        expected_signature = hmac.new(
+            webhook_secret.encode('utf-8'),
             payload_body,
             hashlib.sha256
         ).hexdigest()
@@ -125,36 +203,21 @@ class GitHubWebhookClient:
             ]
         }
     
-    def validate_webhook_request(self, request):
+    def validate_webhook_request(self, request, repo_owner=None, repo_name=None):
         """
         验证webhook请求的完整性和权限
         
         Args:
             request: Django HttpRequest对象
+            repo_owner: 仓库所有者用户名
+            repo_name: 仓库名称
             
         Returns:
             tuple: (is_valid, error_response, payload)
         """
         logger.info("开始验证GitHub webhook请求")
         
-        # 检查webhook密钥配置
-        if not self.webhook_secret:
-            logger.error("Webhook密钥未配置")
-            return False, JsonResponse({'error': 'Webhook secret not configured'}, status=500), None
-        
-        # 检查签名头
-        signature_header = request.META.get('HTTP_X_HUB_SIGNATURE_256', '')
-        a = "/n".join([f"{key}:{value}" for key, value in request.META.items()])
-        if not signature_header:
-            logger.warning("Webhook请求缺少签名头")
-            return False, HttpResponseForbidden('Missing signature header'), None
-        
-        # 验证签名
-        if not self.verify_signature(request.body, signature_header):
-            logger.error("Webhook签名验证失败")
-            return False, HttpResponseForbidden('Invalid signature'), None
-        
-        # 解析JSON
+        # 先解析 payload 获取仓库信息
         try:
             if len(request.body) == 0:
                 logger.error("Webhook请求体为空")
@@ -177,16 +240,46 @@ class GitHubWebhookClient:
             logger.error(f"Webhook请求解析失败: {str(e)}")
             return False, JsonResponse({'error': 'Invalid JSON payload'}, status=400), None
         
-        # 验证仓库权限
+        # 从 payload 中提取仓库信息（优先使用传入的参数）
         repository = payload.get('repository', {})
-        repo_owner = repository.get('owner', {}).get('login', '')
-        repo_name = repository.get('name', '')
+        payload_repo_owner = repository.get('owner', {}).get('login', '')
+        payload_repo_name = repository.get('name', '')
         
-        if not self.is_repository_allowed(repo_owner, repo_name):
-            logger.warning(f"仓库 {repo_owner}/{repo_name} 不在允许列表中，允许的仓库: {self.allowed_owner}/{self.allowed_name}")
-            return False, HttpResponseForbidden(f'Repository {repo_owner}/{repo_name} is not allowed for code review'), None
+        # 使用传入的参数或从 payload 中提取的信息
+        final_repo_owner = repo_owner or payload_repo_owner
+        final_repo_name = repo_name or payload_repo_name
         
-        logger.info(f"Webhook验证成功，仓库: {repo_owner}/{repo_name}")
+        if not final_repo_owner or not final_repo_name:
+            logger.error("无法获取仓库信息")
+            return False, JsonResponse({'error': 'Repository information not found'}, status=400), None
+        
+        # 从数据库查询仓库配置
+        try:
+            repo_config = RepositoryConfig.objects.get(
+                repo_owner=final_repo_owner,
+                repo_name=final_repo_name,
+                is_enabled=True
+            )
+            logger.info(f"✅ 找到启用的仓库配置: {final_repo_owner}/{final_repo_name}")
+        except RepositoryConfig.DoesNotExist:
+            logger.warning(f"⚠️ 仓库 {final_repo_owner}/{final_repo_name} 未配置或未启用")
+            return False, HttpResponseForbidden(f'Repository {final_repo_owner}/{final_repo_name} is not configured or disabled'), None
+        except Exception as e:
+            logger.error(f"❌ 查询仓库配置失败: {e}")
+            return False, JsonResponse({'error': 'Database query failed'}, status=500), None
+        
+        # 检查签名头
+        signature_header = request.META.get('HTTP_X_HUB_SIGNATURE_256', '')
+        if not signature_header:
+            logger.warning("Webhook请求缺少签名头")
+            return False, HttpResponseForbidden('Missing signature header'), None
+        
+        # 使用数据库中的 webhook_secret 验证签名
+        if not self._verify_signature_with_secret(request.body, signature_header, repo_config.webhook_secret):
+            logger.error(f"仓库 {final_repo_owner}/{final_repo_name} 的 Webhook 签名验证失败")
+            return False, HttpResponseForbidden('Invalid signature'), None
+        
+        logger.info(f"✅ Webhook验证成功，仓库: {final_repo_owner}/{final_repo_name}")
         return True, None, payload
     
     def extract_latest_commit_sha(self, payload):
@@ -258,13 +351,43 @@ class GitHubWebhookClient:
 class GitHubDataClient:
     """
     GitHub数据客户端，专门用于异步任务的数据获取
+    支持多仓库配置管理
     """
     
-    def __init__(self):
-        self.github_token = os.getenv('GITHUB_TOKEN', '')
-        self.repo_owner = os.getenv('REPO_OWNER', '').strip()
-        self.repo_name = os.getenv('REPO_NAME', '').strip()
+    def __init__(self, repo_owner=None, repo_name=None):
+        """
+        初始化 GitHub 数据客户端
+        
+        Args:
+            repo_owner: 仓库所有者用户名
+            repo_name: 仓库名称
+        """
+        self.repo_owner = repo_owner
+        self.repo_name = repo_name
+        self.repo_config = None
         self.base_url = 'https://api.github.com'
+        
+        # 如果提供了仓库信息，尝试从数据库获取配置
+        if repo_owner and repo_name:
+            try:
+                self.repo_config = RepositoryConfig.objects.get(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    is_enabled=True
+                )
+                self.github_token = self.repo_config.github_token
+                logger.info(f"✅ GitHubDataClient 加载仓库配置成功: {repo_owner}/{repo_name}")
+            except RepositoryConfig.DoesNotExist:
+                logger.warning(f"⚠️ GitHubDataClient 未找到仓库配置: {repo_owner}/{repo_name}")
+                self.github_token = os.getenv('GITHUB_TOKEN', '')
+            except Exception as e:
+                logger.error(f"❌ GitHubDataClient 加载仓库配置失败: {e}")
+                self.github_token = os.getenv('GITHUB_TOKEN', '')
+        else:
+            # 回退到环境变量配置
+            self.github_token = os.getenv('GITHUB_TOKEN', '')
+            self.repo_owner = os.getenv('REPO_OWNER', '').strip()
+            self.repo_name = os.getenv('REPO_NAME', '').strip()
     
     def get_headers(self):
         """获取GitHub API请求头"""

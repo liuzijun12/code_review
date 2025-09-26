@@ -6,18 +6,19 @@ import logging
 from celery import shared_task
 from django.utils import timezone
 from ..git_client import GitHubDataClient
-from ..sql_client import DatabaseClient
 from ..schemas import is_valid_async_data_type, ASYNC_DATA_TYPES
 
 logger = logging.getLogger(__name__)
 
 
 @shared_task(name='app_ai.tasks.async_get.fetch_github_data_async')
-def fetch_github_data_async(data_type: str, **params):
+def fetch_github_data_async(data_type: str, repo_owner: str = None, repo_name: str = None, **params):
     """
     异步获取GitHub数据并保存到数据库
     Args:
         data_type: 数据类型 (recent_commits, commit_details, etc.)
+        repo_owner: 仓库所有者用户名
+        repo_name: 仓库名称
         **params: 请求参数
         
     Returns:
@@ -45,8 +46,8 @@ def fetch_github_data_async(data_type: str, **params):
                 'execution_time': timezone.now().isoformat()
             }
         
-        # 创建GitHub数据客户端
-        data_client = GitHubDataClient()
+        # 创建GitHub数据客户端（使用仓库信息）
+        data_client = GitHubDataClient(repo_owner=repo_owner, repo_name=repo_name)
         
         # 获取数据
         result = data_client.get_data(data_type, **params)
@@ -63,7 +64,7 @@ def fetch_github_data_async(data_type: str, **params):
         # 根据数据类型处理 - 只支持单个提交
         if data_type == 'commit_details':
             # 单个提交直接进行Ollama分析，不存数据库
-            _process_single_commit_for_ollama(result)
+            _process_single_commit_for_ollama(result, repo_owner=repo_owner, repo_name=repo_name)
         else:
             # 不再支持其他数据类型
             result['error'] = f'Unsupported data type: {data_type}. Only commit_details is supported.'
@@ -86,7 +87,7 @@ def fetch_github_data_async(data_type: str, **params):
         }
 
 
-def _process_single_commit_for_ollama(result):
+def _process_single_commit_for_ollama(result, repo_owner=None, repo_name=None):
     """处理单个提交，直接进行Ollama分析，不存数据库"""
     try:
         if 'ollama_data' not in result:
@@ -155,7 +156,11 @@ def _process_single_commit_for_ollama(result):
                         'analysis_suggestion': analysis_result.get('response', '')
                     }
                     
-                    push_task = push_single_analysis_result.delay(push_data)
+                    push_task = push_single_analysis_result.delay(
+                        push_data, 
+                        repo_owner=repo_owner, 
+                        repo_name=repo_name
+                    )
                     logger.info(f"📱 自动触发推送任务: {push_task.id}")
                     
                     result['push_task'] = {

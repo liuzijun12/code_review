@@ -1,66 +1,76 @@
 from django.db import models
 from django.utils import timezone
 
-class GitCommitAnalysis(models.Model):
+class RepositoryConfig(models.Model):
     """
-    用于存储GitHub Commit分析数据的模型，对应数据库中的 git_data 表。
+    仓库配置模型，用于管理GitHub仓库的配置信息
     """
     
-    commit_sha = models.CharField(
-        max_length=40, 
-        unique=True, 
-        db_index=True,
-        verbose_name="提交标识码 (SHA)"
-    )
-
-    author_name = models.CharField(
+    repo_owner = models.CharField(
         max_length=255,
-        verbose_name="提交人"
+        verbose_name="仓库作者/所有者",
+        help_text="GitHub仓库的所有者用户名"
     )
-
-
-    commit_timestamp = models.DateTimeField(
-        verbose_name="提交时间"
+    
+    repo_name = models.CharField(
+        max_length=255,
+        verbose_name="仓库名称",
+        help_text="GitHub仓库名称"
     )
-
-
-    code_diff = models.TextField(
-        verbose_name="提交的代码变更 (Diff)"
+    
+    webhook_secret = models.CharField(
+        max_length=255,
+        verbose_name="Webhook密钥",
+        help_text="GitHub Webhook的密钥，用于验证请求来源"
     )
-
-
-    commit_message = models.TextField(
-        verbose_name="提交注释"
+    
+    github_token = models.CharField(
+        max_length=255,
+        verbose_name="GitHub个人访问令牌",
+        help_text="用于访问GitHub API的个人访问令牌"
     )
-
-
-    analysis_suggestion = models.TextField(
-        blank=True, 
+    
+    is_enabled = models.BooleanField(
+        default=True,
+        verbose_name="是否启用",
+        help_text="是否启用此仓库的代码审查功能"
+    )
+    
+    wechat_webhook_url = models.URLField(
+        max_length=500,
+        blank=True,
         null=True,
-        verbose_name="AI修改意见"
+        verbose_name="企业微信Webhook URL",
+        help_text="用于推送代码审查结果的企业微信群机器人Webhook地址"
     )
-
-    is_push = models.IntegerField(
-        default=0,
-        choices=[(0, '未推送'), (1, '已推送')],
-        verbose_name="是否已推送到企业微信"
-    )
-
+    
     created_at = models.DateTimeField(
         auto_now_add=True,
-        verbose_name="记录创建时间"
+        verbose_name="创建时间"
     )
+    
     updated_at = models.DateTimeField(
         auto_now=True,
-        verbose_name="记录更新时间"
+        verbose_name="更新时间"
     )
-
+    
     class Meta:
-        # 定义数据库中的表名
-        db_table = 'git_data'
-        verbose_name = "Git提交分析记录"
+        db_table = 'repository_config'
+        verbose_name = "仓库配置"
         verbose_name_plural = verbose_name
-        ordering = ['-commit_timestamp']
-
+        ordering = ['-created_at']
+        # 确保同一个仓库只有一个配置记录
+        unique_together = [['repo_owner', 'repo_name']]
+    
     def __str__(self):
-        return f"{self.author_name} - {self.commit_sha[:7]}"
+        status = "启用" if self.is_enabled else "禁用"
+        return f"{self.repo_owner}/{self.repo_name} ({status})"
+    
+    @property
+    def full_name(self):
+        """返回完整的仓库名称"""
+        return f"{self.repo_owner}/{self.repo_name}"
+    
+    def get_webhook_url(self):
+        """获取微信webhook URL，如果为空则返回None"""
+        return self.wechat_webhook_url if self.wechat_webhook_url else None
