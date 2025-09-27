@@ -16,6 +16,8 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from django.shortcuts import redirect
+from django.conf import settings
+from django.conf.urls.static import static
 
 def redirect_to_admin(request):
     return redirect('/admin/')
@@ -25,3 +27,6 @@ urlpatterns = [
     path('admin/', admin.site.urls),  # admin路径
     path('ai/', include('app_ai.urls')),
 ]
+
+# 添加静态文件服务
+urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

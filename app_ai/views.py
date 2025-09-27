@@ -19,10 +19,7 @@ logger = logging.getLogger(__name__)
 @require_http_methods(["POST"])
 def git_webhook(request):
     """GitHub webhook处理器 - 异步版本"""
-    # import pdb
-    # pdb.set_trace()
     try:
-        import json
         body = request.body.decode('utf-8')
         payload_data = json.loads(body)
         
@@ -41,7 +38,6 @@ def git_webhook(request):
     if not is_valid:
         return error_response_data
 
-    b = request.META
     event_type = request.META.get('HTTP_X_GITHUB_EVENT', '')
     logger.info(f"处理webhook事件: {event_type}")
     
@@ -138,62 +134,7 @@ def get_github_data(request):
             result.get('error', 'Unknown error'), 500
         ), status=500)
     
-    # 自动保存到数据库
-    _save_data_to_database(data_type, result, data_client)
-    
     return JsonResponse(success_response(result))
-
-
-def _save_data_to_database(result, data_type, data_client):
-    """统一的数据库保存逻辑"""
-    if data_type == 'commit_details' and result.get('status') == 'success':
-        _save_single_commit(result)
-    elif data_type == 'recent_commits' and result.get('status') == 'success':
-        _save_recent_commits_batch(result, data_client)
-
-
-def _save_single_commit(result):
-    """保存单个提交到数据库"""
-    try:
-        if 'commit_detail' in result and 'commit' in result['commit_detail']:
-            commit_detail = result['commit_detail']['commit']
-            github_data = {
-                'sha': commit_detail['sha'],
-                'commit': {
-                    'author': {
-                        'name': commit_detail['author']['name'],
-                        'email': commit_detail['author']['email'],
-                        'date': commit_detail['timestamp']['authored_date']
-                    },
-                    'message': commit_detail['message']
-                },
-                'author': {
-                    'login': commit_detail['author']['username'],
-                    'avatar_url': commit_detail['author'].get('avatar_url')
-                },
-                'html_url': commit_detail['urls']['html_url'],
-                'url': commit_detail['urls']['api_url'],
-                'stats': commit_detail.get('stats', {}),
-                'files': commit_detail.get('files', []),
-                'parents': commit_detail.get('parents', [])
-            }
-            
-            # 数据库保存功能已移除
-            result['database_save'] = {
-                'success': True,
-                'message': '数据库保存功能已禁用',
-                'commit_saved': None
-            }
-            
-    except Exception as e:
-        result['database_save'] = {
-            'success': False,
-            'message': f'数据库保存失败: {str(e)}',
-            'commit_saved': None
-        }
-
-
-# _save_recent_commits_batch 函数已删除，现在只支持单个提交处理
         
 # ==================== 异步接口 ====================
 
@@ -287,15 +228,6 @@ def get_task_status(request, task_id):
 
 
 @require_GET
-def get_recent_commits_async_start(request):
-    """快速启动异步获取最近提交的任务 (已废弃)"""
-    return JsonResponse(error_response(
-        'This API is deprecated. Only single commit processing is supported via webhook events.', 
-        400
-    ), status=400)
-
-
-@require_GET
 def get_commit_details_async_start(request):
     """快速启动异步获取提交详情的任务"""
     try:
@@ -328,51 +260,6 @@ def get_commit_details_async_start(request):
         }))
         
     except Exception as e:
-        return JsonResponse(error_response(str(e), 500), status=500)
-
-
-# ==================== Ollama分析接口 ====================
-
-@require_POST
-@csrf_exempt
-def start_ollama_analysis_api(request):
-    """启动Ollama分析任务 (已废弃)"""
-    return JsonResponse(error_response(
-        'This API is deprecated. Ollama analysis is now automatically triggered by webhook events.', 
-        400
-    ), status=400)
-
-
-@require_POST
-@csrf_exempt
-def analyze_single_commit_api(request):
-    """分析单个提交 (已废弃)"""
-    return JsonResponse(error_response(
-        'This API is deprecated. Single commit analysis is now automatically triggered by webhook events.', 
-        400
-    ), status=400)
-
-
-@require_GET
-def get_unanalyzed_commits_api(request):
-    """获取未分析的提交列表"""
-    try:
-        limit = int(request.GET.get('limit', 20))
-        if limit < 1 or limit > 100:
-            return JsonResponse(error_response('limit must be between 1 and 100', 400), status=400)
-        
-        # 功能已禁用 - 不再存储提交分析数据
-        return JsonResponse(success_response({
-            'unanalyzed_commits': [],
-            'count': 0,
-            'limit': limit,
-            'message': '提交分析存储功能已禁用'
-        }))
-        
-    except ValueError:
-        return JsonResponse(error_response('limit must be an integer', 400), status=400)
-    except Exception as e:
-        logger.error(f"获取未分析提交失败: {e}")
         return JsonResponse(error_response(str(e), 500), status=500)
 
 
@@ -476,14 +363,16 @@ def start_push_task_api(request):
     """启动推送任务"""
     try:
         data = json.loads(request.body)
-        delay_seconds = data.get('delay_seconds', 3)  # 默认3秒延迟
+        delay_seconds = data.get('delay_seconds', 3)
+        repo_owner = data.get('repo_owner', '')
+        repo_name = data.get('repo_name', '')
         
         # 验证延迟时间
         if not isinstance(delay_seconds, (int, float)) or delay_seconds < 0:
             return JsonResponse(error_response('delay_seconds must be a non-negative number', 400), status=400)
         
         # 启动推送任务
-        task = start_push_task(delay_seconds)
+        task = start_push_task(delay_seconds, repo_owner, repo_name)
         
         logger.info(f"启动推送任务: {task.id}")
         
@@ -491,6 +380,8 @@ def start_push_task_api(request):
             'task_id': task.id,
             'message': '推送任务已启动',
             'delay_seconds': delay_seconds,
+            'repo_owner': repo_owner,
+            'repo_name': repo_name,
             'check_url': f'/ai/task-status/{task.id}/'
         }))
         
@@ -498,43 +389,4 @@ def start_push_task_api(request):
         return JsonResponse(error_response('Invalid JSON payload', 400), status=400)
     except Exception as e:
         logger.error(f"启动推送任务失败: {e}")
-        return JsonResponse(error_response(str(e), 500), status=500)
-
-
-@require_GET
-def get_unpushed_commits_api(request):
-    """获取未推送的分析结果列表"""
-    try:
-        limit = int(request.GET.get('limit', 20))
-        if limit < 1 or limit > 100:
-            return JsonResponse(error_response('limit must be between 1 and 100', 400), status=400)
-        
-        # 数据库存储功能已禁用
-        unpushed_records = []
-        
-        # 格式化返回数据
-        commits_data = []
-        for record in unpushed_records:
-            commits_data.append({
-                'commit_sha': record.commit_sha,
-                'short_sha': record.commit_sha[:8],
-                'author_name': record.author_name,
-                'commit_message': record.commit_message[:100] + '...' if len(record.commit_message) > 100 else record.commit_message,
-                'commit_timestamp': record.commit_timestamp.strftime('%Y-%m-%d %H:%M:%S'),
-                'analysis_length': len(record.analysis_suggestion),
-                'code_diff_length': len(record.code_diff) if record.code_diff else 0,
-                'created_at': record.created_at.strftime('%Y-%m-%d %H:%M:%S')
-            })
-        
-        return JsonResponse(success_response({
-            'unpushed_commits': commits_data,
-            'count': len(commits_data),
-            'limit': limit,
-            'message': f'找到 {len(commits_data)} 个未推送的分析结果'
-        }))
-        
-    except ValueError:
-        return JsonResponse(error_response('limit must be an integer', 400), status=400)
-    except Exception as e:
-        logger.error(f"获取未推送提交失败: {e}")
         return JsonResponse(error_response(str(e), 500), status=500)

@@ -86,6 +86,7 @@ services:
       - ./.env:/app/.env:ro
       - static_volume:/app/staticfiles
       - ./logs:/app/logs
+      - .:/app  # 挂载整个项目目录到容器
     ports:
       - "8000:8000"
     depends_on:
@@ -129,6 +130,7 @@ services:
     volumes:
       - ./.env:/app/.env:ro
       - ./logs:/app/logs
+      - .:/app  # 挂载整个项目目录到容器
     depends_on:
       mysql:
         condition: service_healthy
@@ -186,6 +188,7 @@ services:
       "
     volumes:
       - ./.env:/app/.env:ro
+      - .:/app  # 挂载整个项目目录到容器
     ports:
       - "5555:5555"
     depends_on:

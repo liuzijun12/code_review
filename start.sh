@@ -110,6 +110,13 @@ if [[ ! -f ".env" ]]; then
     fi
 fi
 
+# 检查 Docker 是否运行
+if ! docker version &> /dev/null; then
+    echo "❌ Docker 未运行或未安装"
+    echo "请先启动 Docker"
+    exit 1
+fi
+
 # 启动服务
 echo "🚀 启动 Docker Compose 服务..."
 echo "================================="
@@ -124,7 +131,10 @@ docker pull ghcr.io/open-webui/open-webui:main &
 wait
 
 echo "🔨 构建并启动服务..."
-docker-compose -f $COMPOSE_FILE up --build -d
+echo "🏗️  Step 1: 构建镜像..."
+docker-compose -f $COMPOSE_FILE build
+echo "🚀 Step 2: 启动服务..."
+docker-compose -f $COMPOSE_FILE up -d
 
 # 检查启动状态
 echo ""
