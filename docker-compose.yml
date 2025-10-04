@@ -217,6 +217,24 @@ services:
     networks:
       - code_review_net
 
+  # FRP Client - 内网穿透客户端
+  frpc:
+    image: snowdreamtech/frpc:latest
+    container_name: code_review_frpc
+    restart: unless-stopped
+    volumes:
+      - ./frpc.toml:/etc/frp/frpc.toml:ro
+    command: frpc -c /etc/frp/frpc.toml
+    depends_on:
+      - django
+    networks:
+      - code_review_net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 # 数据卷
 volumes:
   mysql_data:

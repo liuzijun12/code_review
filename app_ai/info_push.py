@@ -187,7 +187,7 @@ class WeChatWorkPusher:
                     'success': True,
                     'message': '推送成功',
                     'commit_sha': commit_data.get('commit_sha', 'Unknown')[:8]
-                }
+                    }
             else:
                 return {
                     'success': False,

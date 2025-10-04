@@ -63,7 +63,7 @@ def fetch_github_data_async(data_type: str, repo_owner: str = None, repo_name: s
         
         # 根据数据类型处理 - 只支持单个提交
         if data_type == 'commit_details':
-            # 单个提交直接进行Ollama分析，不存数据库
+            # 单个提交进行Ollama分析
             _process_single_commit_for_ollama(result, repo_owner=repo_owner, repo_name=repo_name)
         else:
             # 不再支持其他数据类型

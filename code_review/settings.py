@@ -37,8 +37,24 @@ SECRET_KEY = 'django-insecure-2k=x9_t=1)sw*@#oabqe0*r34t*%goq95o^)$0*l_90rv4cb4*
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+USE_X_FORWARDED_HOST = True
+USE_X_FORWARDED_PORT = True
 
+# ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,47.118.16.139,47.118.16.139:6000,47.118.16.139:6001').split(',')
+ALLOWED_HOSTS = ["*"]
+
+# CSRF 和 Cookie 配置
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+    'http://47.118.16.173:8000',
+    'https://www.wsztest.online',
+    'http://www.wsztest.online',
+]
+CSRF_COOKIE_SECURE = False
+CSRF_COOKIE_SAMESITE = 'None'
+SESSION_COOKIE_SECURE = False
+SESSION_COOKIE_SAMESITE = 'Lax'
 
 # Application definition
 

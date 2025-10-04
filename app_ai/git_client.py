@@ -55,7 +55,7 @@ class GitHubWebhookClient:
             # 回退到环境变量配置
             self.webhook_secret = os.getenv('GITHUB_WEBHOOK_SECRET', '')
             self.allowed_owner = os.getenv('REPO_OWNER', '').strip()
-            self.allowed_name = os.getenv('REPO_NAME', '').strip()
+            self.allowed_name = os.getenv('REPO_NAME', '').strip()  
             self.github_token = os.getenv('GITHUB_TOKEN', '')
             self.wechat_webhook_url = os.getenv('WX_WEBHOOK_URL', '')
     
