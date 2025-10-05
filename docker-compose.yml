@@ -224,7 +224,6 @@ services:
     restart: unless-stopped
     volumes:
       - ./frpc.toml:/etc/frp/frpc.toml:ro
-    command: frpc -c /etc/frp/frpc.toml
     depends_on:
       - django
     networks:
