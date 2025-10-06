@@ -37,24 +37,59 @@ SECRET_KEY = 'django-insecure-2k=x9_t=1)sw*@#oabqe0*r34t*%goq95o^)$0*l_90rv4cb4*
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+# 代理和转发配置
 USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')  # 支持反向代理的 HTTPS
+
+# HTTPS 安全配置（生产环境建议启用）
+# SECURE_SSL_REDIRECT = True  # 强制 HTTPS 重定向（生产环境启用）
+SECURE_HSTS_SECONDS = 0  # HTTP 严格传输安全（生产环境设置为 31536000）
+SECURE_HSTS_INCLUDE_SUBDOMAINS = False  # 生产环境设置为 True
+SECURE_HSTS_PRELOAD = False  # 生产环境设置为 True
 
 # ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,47.118.16.139,47.118.16.139:6000,47.118.16.139:6001').split(',')
 ALLOWED_HOSTS = ["*"]
 
 # CSRF 和 Cookie 配置
 CSRF_TRUSTED_ORIGINS = [
+    # HTTP 地址（开发环境）
     'http://localhost:8000',
     'http://127.0.0.1:8000',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
     'http://47.118.16.173:8000',
-    'https://www.wsztest.online',
     'http://www.wsztest.online',
+    
+    # HTTPS 地址（生产环境）
+    'https://localhost:8000',
+    'https://127.0.0.1:8000',
+    'https://47.118.16.173',
+    'https://47.118.16.173:8000',
+    'https://www.wsztest.online',
 ]
-CSRF_COOKIE_SECURE = False
-CSRF_COOKIE_SAMESITE = 'None'
-SESSION_COOKIE_SECURE = False
-SESSION_COOKIE_SAMESITE = 'Lax'
+
+# CSRF 配置 - 宽松兼容模式（兼容更多浏览器）
+# 说明：Lax 模式在大多数情况下都能工作，且兼容性最好
+CSRF_COOKIE_SECURE = False  # 改为 False，同时支持 HTTP 和 HTTPS
+CSRF_COOKIE_HTTPONLY = False  # 允许 JavaScript 读取 CSRF token
+CSRF_COOKIE_SAMESITE = 'Lax'  # Lax 模式兼容性最好，大部分场景够用
+CSRF_USE_SESSIONS = False
+CSRF_COOKIE_NAME = 'csrftoken'
+CSRF_COOKIE_DOMAIN = None  # 自动使用当前域名
+
+# Session 配置
+SESSION_COOKIE_SECURE = False  # 改为 False，兼容 HTTP
+SESSION_COOKIE_SAMESITE = 'Lax'  # Lax 模式，兼容性好
+SESSION_COOKIE_HTTPONLY = True
+
+CORS_ALLOW_ALL_ORIGINS = True  # 开发环境使用，生产环境建议改为 False
+
+CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_HEADERS = list(__import__('corsheaders.defaults').defaults.default_headers) + [
+    'x-csrftoken',  # Django CSRF token（重要！）
+]
 
 # Application definition
 
@@ -65,12 +100,14 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'corsheaders',  # CORS 跨域支持
     'django_celery_beat',  # Celery定时任务管理
     'app_ai',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware', 
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
