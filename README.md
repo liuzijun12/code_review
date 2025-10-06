@@ -9,7 +9,6 @@
 **智能代码审查系统 - 让 AI 为你的代码把关**
 
 </div>
-
 ---
 
 ## 🎯 项目简介
@@ -141,7 +140,7 @@ vim .env
 
 ### 启动服务
 
-**需要4个终端窗口：**
+**需要5个终端窗口：**
 
 **终端1 - Django主应用：**
 ```bash
@@ -171,7 +170,17 @@ celery -A code_review worker --loglevel=info
 celery -A code_review worker --loglevel=info --pool=solo
 ```
 
-**终端3 - Redis：**
+**终端3 - Celery Beat (定时任务调度)：**
+```bash
+# 激活虚拟环境
+source venv/bin/activate  # Linux/Mac
+# venv\Scripts\activate   # Windows
+
+# 启动Celery Beat
+celery -A code_review beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+```
+
+**终端4 - Redis：**
 ```bash
 # 启动Redis服务器
 redis-server
@@ -180,7 +189,7 @@ redis-server
 docker run -d -p 6379:6379 redis:7-alpine
 ```
 
-**终端4 - Ollama (可选)：**
+**终端5 - Ollama (可选)：**
 ```bash
 # 启动Ollama服务
 ollama serve

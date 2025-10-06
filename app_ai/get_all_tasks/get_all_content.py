@@ -4,28 +4,94 @@ GitHub Repository Content Fetcher Module
 Features:
 1. Collect file information (recursively get file list)
 2. Fetch file content (read files into variables)
+3. Get repository configuration from database
 """
 import os
 import logging
 import requests
 import base64
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+# ==================== Database Configuration ====================
+
+def get_repo_config_from_db(repo_owner: str, repo_name: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Get repository configuration from database
+    
+    Args:
+        repo_owner: Repository owner
+        repo_name: Repository name
+    
+    Returns:
+        (github_token, error_message)
+        - If found: (token, None)
+        - If not found or error: (None, error_message)
+    """
+    try:
+        from app_ai.models import RepositoryConfig
+        
+        # Query repository configuration
+        repo_config = RepositoryConfig.objects.filter(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            is_enabled=True
+        ).first()
+        
+        if not repo_config:
+            return None, f"Repository '{repo_owner}/{repo_name}' not found in database or is disabled"
+        
+        if not repo_config.github_token:
+            return None, f"GitHub token not configured for repository '{repo_owner}/{repo_name}'"
+        
+        logger.info(f"Found repository config in database: {repo_owner}/{repo_name}")
+        return repo_config.github_token, None
+        
+    except Exception as e:
+        logger.error(f"Database query failed: {e}")
+        return None, f"Database error: {str(e)}"
 
 
 class RepositoryContentFetcher:
     """GitHub Repository Content Fetcher"""
     
-    def __init__(self, repo_owner: Optional[str] = None, repo_name: Optional[str] = None, github_token: Optional[str] = None):
-        """Initialize from environment variables or parameters"""
+    def __init__(
+        self, 
+        repo_owner: Optional[str] = None, 
+        repo_name: Optional[str] = None, 
+        github_token: Optional[str] = None,
+        use_database: bool = False
+    ):
+        """
+        Initialize from database, environment variables or parameters
+        
+        Args:
+            repo_owner: Repository owner
+            repo_name: Repository name
+            github_token: GitHub token (optional if use_database=True)
+            use_database: If True, fetch config from database
+        """
         self.repo_owner = repo_owner or os.getenv('REPO_OWNER', '').strip()
         self.repo_name = repo_name or os.getenv('REPO_NAME', '').strip()
-        self.github_token = github_token or os.getenv('GITHUB_TOKEN', '').strip()
         self.base_url = 'https://api.github.com'
         
         if not self.repo_owner or not self.repo_name:
             raise ValueError("REPO_OWNER and REPO_NAME are required")
+        
+        # Get token from database or parameters/env
+        if use_database:
+            token, error = get_repo_config_from_db(self.repo_owner, self.repo_name)
+            if error:
+                raise ValueError(error)
+            self.github_token = token
+        else:
+            self.github_token = github_token or os.getenv('GITHUB_TOKEN', '').strip()
     
     def _request(self, url: str) -> Optional[Dict]:
         """Make API request"""
@@ -38,7 +104,14 @@ class RepositoryContentFetcher:
         
         try:
             response = requests.get(url, headers=headers, timeout=30)
-            return response.json() if response.status_code == 200 else None
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                # Log detailed error information
+                logger.error(f"GitHub API error: {response.status_code} - {url}")
+                logger.error(f"Response: {response.text[:500]}")
+                return None
         except Exception as e:
             logger.error(f"Request failed: {e}")
             return None
@@ -54,9 +127,17 @@ class RepositoryContentFetcher:
             return []
         
         url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/contents/{path}"
+        
+        # Log API request details on first call
+        if depth == 0:
+            logger.info(f"Requesting GitHub API: {url}")
+            logger.info(f"Token configured: {'Yes' if self.github_token else 'No'}")
+        
         contents = self._request(url)
         
         if not contents:
+            if depth == 0:
+                logger.warning(f"No contents returned from GitHub API for root path")
             return []
         
         items = []
@@ -97,7 +178,8 @@ class RepositoryContentFetcher:
 def collect_files_info(
     file_types: Optional[List[str]] = None,
     repo_owner: Optional[str] = None,
-    repo_name: Optional[str] = None
+    repo_name: Optional[str] = None,
+    use_database: bool = False
 ) -> Dict:
     """
     [Function 1] Collect file information
@@ -106,6 +188,7 @@ def collect_files_info(
         file_types: File type list, e.g. ['.py', '.java'], None for all files
         repo_owner: Repository owner (optional, read from env)
         repo_name: Repository name (optional, read from env)
+        use_database: If True, fetch config from database
     
     Returns:
         {
@@ -117,13 +200,16 @@ def collect_files_info(
         }
     
     Example:
-        # Get all Python files information
-        info = collect_files_info(file_types=['.py'])
-        for file in info['files']:
-            print(file['path'])
+        # Get all Python files information from database
+        info = collect_files_info(
+            file_types=['.py'],
+            repo_owner='username',
+            repo_name='repo',
+            use_database=True
+        )
     """
     try:
-        fetcher = RepositoryContentFetcher(repo_owner, repo_name)
+        fetcher = RepositoryContentFetcher(repo_owner, repo_name, use_database=use_database)
         logger.info(f"Collecting file info: {fetcher.repo_owner}/{fetcher.repo_name}")
         
         # Get all files
@@ -160,7 +246,8 @@ def fetch_files_content(
     file_types: Optional[List[str]] = None,
     max_size_kb: int = 500,
     repo_owner: Optional[str] = None,
-    repo_name: Optional[str] = None
+    repo_name: Optional[str] = None,
+    use_database: bool = False
 ) -> Dict:
     """
     [Function 2] Fetch file content into variables
@@ -168,8 +255,9 @@ def fetch_files_content(
     Args:
         file_types: File types, e.g. ['.py', '.java']
         max_size_kb: Max file size (KB), default 500KB
-        repo_owner: Repository owner (optional)
-        repo_name: Repository name (optional)
+        repo_owner: Repository owner
+        repo_name: Repository name
+        use_database: If True, fetch config from database
     
     Returns:
         {
@@ -183,29 +271,24 @@ def fetch_files_content(
         }
     
     Example:
-        # Get all Python files content
-        result = fetch_files_content(file_types=['.py'])
-        
-        if result['status'] == 'success':
-            content_map = result['content_map']  # dict: path->content
-            
-            # Access specific file
-            main_py = content_map.get('app/main.py', '')
-            
-            # Iterate all files
-            for path, content in content_map.items():
-                print(f"{path}: {len(content)} chars")
+        # Get content from database config
+        result = fetch_files_content(
+            file_types=['.py'],
+            repo_owner='username',
+            repo_name='repo',
+            use_database=True
+        )
     """
     try:
         # 1. First collect file info
         logger.info(f"Starting to fetch file content...")
-        files_info = collect_files_info(file_types, repo_owner, repo_name)
+        files_info = collect_files_info(file_types, repo_owner, repo_name, use_database)
         
         if files_info['status'] != 'success':
             return files_info
         
         # 2. Fetch file content
-        fetcher = RepositoryContentFetcher(repo_owner, repo_name)
+        fetcher = RepositoryContentFetcher(repo_owner, repo_name, use_database=use_database)
         content_map = {}
         max_size_bytes = max_size_kb * 1024
         
@@ -346,7 +429,8 @@ def format_content_with_structure(
     include_tree: bool = True,
     separator: str = "=" * 80,
     repo_owner: Optional[str] = None,
-    repo_name: Optional[str] = None
+    repo_name: Optional[str] = None,
+    use_database: bool = False
 ) -> str:
     """
     [Function 3] Get repository content with directory structure in a formatted string
@@ -376,7 +460,7 @@ def format_content_with_structure(
         # Or use in AI prompt
         ai_prompt = f"Review this code:\n\n{content_str}"
     """
-    result = fetch_files_content(file_types, max_size_kb, repo_owner, repo_name)
+    result = fetch_files_content(file_types, max_size_kb, repo_owner, repo_name, use_database)
     
     if result['status'] != 'success':
         return f"Error: {result.get('error', 'Unknown error')}"
@@ -393,7 +477,7 @@ def format_content_with_structure(
     
     # Directory tree
     if include_tree and result['file_count'] > 0:
-        files_info = collect_files_info(file_types, repo_owner, repo_name)
+        files_info = collect_files_info(file_types, repo_owner, repo_name, use_database)
         if files_info['status'] == 'success':
             output_lines.append("Directory Structure:")
             output_lines.append("")
