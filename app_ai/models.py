@@ -44,6 +44,13 @@ class RepositoryConfig(models.Model):
         help_text="用于推送代码审查结果的企业微信群机器人Webhook地址"
     )
     
+    ollama_prompt_template = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Ollama模型提示词模板",
+        help_text="用于代码审查的自定义提示词模板，支持变量替换。如果为空则使用系统默认提示词"
+    )
+    
     created_at = models.DateTimeField(
         auto_now_add=True,
         verbose_name="创建时间"

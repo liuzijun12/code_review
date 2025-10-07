@@ -12,9 +12,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
-# ==================== Webhook处理 ====================
-
 @csrf_exempt
 @require_http_methods(["POST"])
 def git_webhook(request):

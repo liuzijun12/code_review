@@ -124,7 +124,9 @@ def _process_single_commit_for_ollama(result, repo_owner=None, repo_name=None):
             analysis_result = ollama_client.explain_commit(
                 commit_message=ollama_data['commit_message'],
                 code_diff=ollama_data['code_diff'],
-                author_name=ollama_data['author_name']
+                author_name=ollama_data['author_name'],
+                repo_owner=repo_owner,
+                repo_name=repo_name
             )
             
             if analysis_result.get('status') == 'success':

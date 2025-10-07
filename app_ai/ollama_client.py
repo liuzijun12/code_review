@@ -319,6 +319,111 @@ class OllamaClient:
         
         return True
     
+    def _get_prompt_template(self, repo_owner: str = None, repo_name: str = None, template_type: str = 'code_review') -> str:
+        """
+        获取提示词模板，优先使用仓库配置的自定义模板，否则使用默认模板
+        
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            template_type: 模板类型 ('code_review' 或 'commit_analysis')
+            
+        Returns:
+            str: 提示词模板
+        """
+        # 如果提供了仓库信息，尝试获取自定义模板
+        if repo_owner and repo_name:
+            try:
+                from .models import RepositoryConfig
+                
+                repo_config = RepositoryConfig.objects.filter(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    is_enabled=True
+                ).first()
+                
+                if repo_config and repo_config.ollama_prompt_template:
+                    logger.info(f"使用仓库 {repo_owner}/{repo_name} 的自定义提示词模板")
+                    # 返回自定义模板，标记为自定义类型
+                    return {"template": repo_config.ollama_prompt_template, "is_custom": True}
+                    
+            except Exception as e:
+                logger.warning(f"获取仓库配置失败，使用默认模板: {e}")
+        
+        # 返回默认模板，标记为默认类型
+        if template_type == 'code_review':
+            return {"template": self._get_default_code_review_template(), "is_custom": False}
+        elif template_type == 'commit_analysis':
+            return {"template": self._get_default_commit_analysis_template(), "is_custom": False}
+        else:
+            return {"template": self._get_default_code_review_template(), "is_custom": False}
+    
+    def _get_default_code_review_template(self) -> str:
+        """获取默认的代码审查提示词模板"""
+        return """You are a senior code reviewer ensuring high standards of code quality and security.
+Here is the submitted code：{code_content}
+When invoked:
+
+1. Run git diff to see recent changes
+2. Focus on modified files
+3. Begin review immediately
+
+Review checklist:
+
+- Code is simple and readable
+- Functions and variables are well-named
+- No duplicated code
+- Proper error handling
+- No exposed secrets or API keys
+- Input validation implemented
+- Good test coverage
+- Performance considerations addressed
+
+Provide feedback organized by priority:
+
+- Critical issues (must fix)
+- Warnings (should fix)
+- Suggestions (consider improving)
+
+Include specific examples of how to fix issues.
+
+Finally answer me in Chinese"""
+    
+    def _get_default_commit_analysis_template(self) -> str:
+        """获取默认的提交分析提示词模板"""
+        return """You are a senior code reviewer ensuring high standards of code quality and security.
+commit_message: {commit_message}{author_info}
+code_diff:
+```diff
+{code_diff}
+```
+
+When invoked:
+
+1. Run git diff to see recent changes
+2. Focus on modified files
+3. Begin review immediately
+
+Review checklist:
+
+- Code is simple and readable
+- Functions and variables are well-named
+- No duplicated code
+- Proper error handling
+- No exposed secrets or API keys
+- Input validation implemented
+- Good test coverage
+- Performance considerations addressed
+
+Provide feedback organized by priority:
+
+- Critical issues (must fix)
+- Warnings (should fix)
+- Suggestions (consider improving)
+
+Include specific examples of how to fix issues.
+Finally answer me in Chinese"""
+    
     def chat(self, model_name: str = None, messages: List[Dict[str, str]] = None, stream: bool = None) -> Dict[str, Any]:
         """
         与模型进行对话
@@ -486,13 +591,15 @@ class OllamaClient:
                 'model': model_name
             }
     
-    def code_review(self, code_content: str, model_name: str = None) -> Dict[str, Any]:
+    def code_review(self, code_content: str, model_name: str = None, repo_owner: str = None, repo_name: str = None) -> Dict[str, Any]:
         """
         代码审查功能
         
         Args:
             code_content: 要审查的代码内容
             model_name: 使用的模型名称，默认使用配置中的代码审查模型
+            repo_owner: 仓库所有者（用于获取自定义提示词）
+            repo_name: 仓库名称（用于获取自定义提示词）
             
         Returns:
             dict: 代码审查结果
@@ -507,36 +614,18 @@ class OllamaClient:
                 'model': model_name
             }
         
-        prompt = f"""
-You are a senior code reviewer ensuring high standards of code quality and security.
-Here is the submitted code：{code_content}
-When invoked:
-
-1. Run git diff to see recent changes
-2. Focus on modified files
-3. Begin review immediately
-
-Review checklist:
-
-- Code is simple and readable
-- Functions and variables are well-named
-- No duplicated code
-- Proper error handling
-- No exposed secrets or API keys
-- Input validation implemented
-- Good test coverage
-- Performance considerations addressed
-
-Provide feedback organized by priority:
-
-- Critical issues (must fix)
-- Warnings (should fix)
-- Suggestions (consider improving)
-
-Include specific examples of how to fix issues.
-
-Finally answer me in Chinese
-"""
+        # 获取提示词模板
+        template_info = self._get_prompt_template(repo_owner, repo_name, 'code_review')
+        
+        # 根据模板类型处理提示词
+        if template_info["is_custom"]:
+            # 自定义模板：直接拼接代码内容
+            prompt = f"{template_info['template']}\n\n以下是需要审查的代码：\n```\n{code_content}\n```"
+            logger.info("使用自定义提示词模板，采用拼接方式")
+        else:
+            # 默认模板：使用占位符替换
+            prompt = template_info["template"].format(code_content=code_content)
+            logger.info("使用默认提示词模板，采用占位符替换")
         
         messages = [
             {
@@ -568,7 +657,7 @@ Finally answer me in Chinese
         
         return result
     
-    def explain_commit(self, commit_message: str, code_diff: str, author_name: str = None, model_name: str = None) -> Dict[str, Any]:
+    def explain_commit(self, commit_message: str, code_diff: str, author_name: str = None, model_name: str = None, repo_owner: str = None, repo_name: str = None) -> Dict[str, Any]:
         """
         解释提交内容 - 简化版本，直接接受参数
         
@@ -577,6 +666,8 @@ Finally answer me in Chinese
             code_diff: 代码差异
             author_name: 提交作者（可选）
             model_name: 使用的模型名称，默认使用配置中的提交分析模型
+            repo_owner: 仓库所有者（用于获取自定义提示词）
+            repo_name: 仓库名称（用于获取自定义提示词）
             
         Returns:
             dict: 提交解释结果
@@ -588,43 +679,27 @@ Finally answer me in Chinese
             logger.warning(f"代码差异长度 ({len(code_diff)}) 超过限制 ({self.config.max_code_length})")
             code_diff = code_diff[:self.config.max_code_length] + "\n...[内容被截断]"
         
-        # 构造分析提示
+        # 构造作者信息
         author_info = f"\n作者: {author_name}" if author_name else ""
         
-        prompt = f"""
-You are a senior code reviewer ensuring high standards of code quality and security.
-commit_message: {commit_message}{author_info}
-code_diff:
-```diff
-{code_diff}
-```
-
-When invoked:
-
-1. Run git diff to see recent changes
-2. Focus on modified files
-3. Begin review immediately
-
-Review checklist:
-
-- Code is simple and readable
-- Functions and variables are well-named
-- No duplicated code
-- Proper error handling
-- No exposed secrets or API keys
-- Input validation implemented
-- Good test coverage
-- Performance considerations addressed
-
-Provide feedback organized by priority:
-
-- Critical issues (must fix)
-- Warnings (should fix)
-- Suggestions (consider improving)
-
-Include specific examples of how to fix issues.
-Finally answer me in Chinese
-"""
+        # 获取提示词模板
+        template_info = self._get_prompt_template(repo_owner, repo_name, 'commit_analysis')
+        
+        # 根据模板类型处理提示词
+        if template_info["is_custom"]:
+            # 自定义模板：直接拼接提交信息和代码差异
+            prompt = f"{template_info['template']}\n\n"
+            prompt += f"提交信息: {commit_message}{author_info}\n\n"
+            prompt += f"代码变更:\n```diff\n{code_diff}\n```"
+            logger.info("使用自定义提示词模板，采用拼接方式")
+        else:
+            # 默认模板：使用占位符替换
+            prompt = template_info["template"].format(
+                commit_message=commit_message,
+                author_info=author_info,
+                code_diff=code_diff
+            )
+            logger.info("使用默认提示词模板，采用占位符替换")
         
         # 验证总内容长度
         if not self._validate_content_length(prompt):
