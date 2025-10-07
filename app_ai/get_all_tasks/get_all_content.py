@@ -440,7 +440,7 @@ def format_content_with_structure(
     
     Args:
         file_types: File types to include, e.g. ['.py', '.java']
-        max_size_kb: Max file size (KB), default 500KB
+        max_size_kb: Max file size (KB), default 500KB  
         include_tree: Whether to include directory tree at the beginning
         separator: Separator line between files
         repo_owner: Repository owner (optional)

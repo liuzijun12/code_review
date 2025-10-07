@@ -122,6 +122,8 @@ Provide feedback organized by priority:
 
 Include specific examples of how to fix issues.
 
+你要去查看代码的规范性，以及实现的功能稳不稳定。
+
 **重要：请全部使用中文回答，提供详细、专业的分析。**
 """
         

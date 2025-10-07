@@ -85,43 +85,32 @@ class WeChatNotifier:
         Returns:
             {'status': 'success'/'error', 'message': str}
         """
-        # Build markdown message
+        # Build message
         if task_status == "success":
-            status_emoji = "✅"
-            status_text = "Analysis Completed"
+            status_text = "分析完成"
         else:
-            status_emoji = "❌"
-            status_text = "Analysis Failed"
+            status_text = "分析失败"
         
         # Format timestamp
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
         
-        # Build markdown content
-        markdown_content = f"""# {status_emoji} **Repository Code Analysis Report**
+        # Build markdown content (clean Chinese version)
+        markdown_content = f"""代码仓库分析报告
 
----
+仓库名称: {repository}
+分析状态: {status_text}
+分析时间: {timestamp}
+                                             
+分析统计
+- 分析文件数: {file_count} 个
+- 内容大小: {content_length:,} 字符
+- 使用模型: {model}
 
-**Repository:** `{repository}`
-**Status:** <font color="info">{status_text}</font>
-**Time:** {timestamp}
-
----
-
-## 📊 **Analysis Statistics**
-
-- **Files Analyzed:** {file_count} files
-- **Content Size:** {content_length:,} characters
-- **AI Model:** {model}
-
----
-
-## 📝 **Analysis Summary**
+分析结果
 
 {summary}
 
----
-
-<font color="comment">Automated analysis by Code Review System</font>
+自动分析系统
 """
         
         return self.send_markdown(markdown_content)
@@ -238,7 +227,7 @@ def send_analysis_to_wechat(
                 'status': 'skipped',
                 'message': 'No WeChat webhook configured'
             }
-        
+
         # Create notifier
         notifier = WeChatNotifier(webhook_url)
         
