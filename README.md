@@ -22,7 +22,6 @@ Code Review System 是一个智能代码审查平台，通过 GitHub Webhook 自
 - 💬 **企业微信推送** - 自动推送审查结果到微信群
 - ⚡ **异步处理** - Celery + Redis 异步任务队列
 - 🐳 **容器化部署** - Docker Compose 一键部署
-- 🎯 **GPU/CPU 双模式** - 自动检测并选择最佳运行模式
 
 ## 🚀 快速开始
 
@@ -73,29 +72,18 @@ CELERY_RESULT_BACKEND=redis://redis:6379/0
 
 ### 3. 启动服务
 
-**Linux/Mac 系统：**
-```bash
-./start.sh        # 自动检测模式
-./start.sh cpu     # 强制 CPU 模式
-./start.sh gpu     # 强制 GPU 模式
-```
+**使用启动脚本（推荐）：**
 
-**Windows 系统：**
-```cmd
-start.bat         # 自动检测模式
-start.bat cpu     # 强制 CPU 模式
-start.bat gpu     # 强制 GPU 模式
+Linux/Mac 系统：
+```bash
+./start.sh
 ```
 
 **手动启动：**
 ```bash
-# GPU 模式（Linux + NVIDIA GPU）
+# 构建并启动所有服务
 docker-compose build
 docker-compose up -d
-
-# CPU 模式（Mac/Windows/无GPU）
-docker-compose -f docker-compose.cpu.yml build
-docker-compose -f docker-compose.cpu.yml up -d
 
 # 查看启动状态
 docker-compose ps
@@ -279,14 +267,16 @@ docker-compose up -d
 </details>
 
 <details>
-<summary><strong>GPU 配置错误</strong></summary>
+<summary><strong>容器启动失败</strong></summary>
 
 ```bash
-# 使用 CPU 模式
-./start.sh cpu
+# 查看详细错误日志
+docker-compose logs
 
-# 或手动启动 CPU 模式
-docker-compose -f docker-compose.cpu.yml up -d
+# 重新构建镜像
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
 ```
 </details>
 
@@ -318,15 +308,21 @@ docker exec -it code_review_ollama ollama pull llama3.1:8b
 
 ```
 code_review/
-├── docker-compose.yml          # GPU 模式配置
-├── docker-compose.cpu.yml      # CPU 模式配置
-├── start.sh / start.bat         # 智能启动脚本
-├── Dockerfile                   # 应用镜像
-├── requirement.txt              # Python 依赖
-├── example.env                  # 环境变量模板
-├── code_review/                 # Django 项目配置
-├── app_ai/                      # AI 功能核心模块
-└── logs/                        # 应用日志
+├── docker-compose.yml          # Docker 编排配置
+├── start.sh / start.bat        # 启动脚本
+├── Dockerfile                  # 应用镜像
+├── requirement.txt             # Python 依赖
+├── example.env                 # 环境变量模板
+├── code_review/                # Django 项目配置
+│   ├── settings.py            # Django 配置
+│   ├── celery.py              # Celery 配置
+│   └── urls.py                # URL 路由
+├── app_ai/                     # AI 功能核心模块
+│   ├── views.py               # API 视图
+│   ├── models.py              # 数据模型
+│   ├── tasks/                 # Celery 异步任务
+│   └── get_all_tasks/         # 代码分析任务
+└── logs/                       # 应用日志
 ```
 
 ## 🤝 贡献指南
