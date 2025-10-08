@@ -21,7 +21,6 @@ from .ollama_all_setting import (
     OllamaConfig,
     OllamaAnalysisClient,
     get_ollama_client,
-    test_connection,
     ollama_config
 )
 
@@ -46,7 +45,6 @@ __all__ = [
     'OllamaConfig',
     'OllamaAnalysisClient',
     'get_ollama_client',
-    'test_connection',
     'ollama_config',
     
     # WeChat Work

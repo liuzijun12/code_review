@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Any
 from celery import shared_task
 
 from .get_all_content import format_content_with_structure
-from .ollama_all_setting import get_ollama_client, test_connection
+from .ollama_all_setting import get_ollama_client
 from .wechat_notifier import send_analysis_to_wechat
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,9 @@ def analyze_repository_summary_from_db(
     """
     try:
         # Check Ollama connection
-        ollama_status = test_connection()
+        # 检查 Ollama 连接
+        client = get_ollama_client(ollama_url, model_name)
+        ollama_status = client.check_connection()
         if ollama_status['status'] != 'connected':
             error = ollama_status.get('error', 'Connection failed')
             return {'status': 'error', 'error': f'Ollama: {error}'}

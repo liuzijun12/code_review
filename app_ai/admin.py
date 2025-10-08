@@ -11,6 +11,7 @@ class RepositoryConfigAdmin(admin.ModelAdmin):
     list_display = [
         'full_name', 
         'is_enabled_display', 
+        'has_custom_prompt',
         'has_webhook_url', 
         'created_at', 
         'updated_at'
@@ -39,6 +40,11 @@ class RepositoryConfigAdmin(admin.ModelAdmin):
         ('认证配置', {
             'fields': ('webhook_secret', 'github_token'),
             'classes': ('collapse',)
+        }),
+        ('AI配置', {
+            'fields': ('ollama_prompt_template',),
+            'classes': ('collapse',),
+            'description': '自定义Ollama模型提示词模板。如果为空，将使用系统默认模板。'
         }),
         ('通知配置', {
             'fields': ('wechat_webhook_url',),
@@ -73,6 +79,18 @@ class RepositoryConfigAdmin(admin.ModelAdmin):
                 '<span style="color: orange;">❌</span>'
             )
     has_webhook_url.short_description = '微信通知'
+    
+    def has_custom_prompt(self, obj):
+        """显示是否配置了自定义提示词"""
+        if obj.ollama_prompt_template:
+            return format_html(
+                '<span style="color: blue;">✅ 自定义</span>'
+            )
+        else:
+            return format_html(
+                '<span style="color: gray;">默认</span>'
+            )
+    has_custom_prompt.short_description = 'AI提示词'
     
     def get_queryset(self, request):
         """优化查询"""

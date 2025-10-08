@@ -8,7 +8,6 @@ import json
 import requests
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-from django.conf import settings
 from django.utils import timezone
 from .models import RepositoryConfig
 
@@ -43,18 +42,19 @@ class WeChatWorkPusher:
                 logger.info(f"✅ WeChatWorkPusher 加载仓库配置成功: {repo_owner}/{repo_name}")
             except RepositoryConfig.DoesNotExist:
                 logger.warning(f"⚠️ WeChatWorkPusher 未找到仓库配置: {repo_owner}/{repo_name}")
-                self.webhook_url = getattr(settings, 'WX_WEBHOOK_URL', None)
+                self.webhook_url = None
             except Exception as e:
                 logger.error(f"❌ WeChatWorkPusher 加载仓库配置失败: {e}")
-                self.webhook_url = getattr(settings, 'WX_WEBHOOK_URL', None)
+                self.webhook_url = None
         else:
-            # 回退到环境变量配置
-            self.webhook_url = getattr(settings, 'WX_WEBHOOK_URL', None)
+            # 没有提供仓库信息，无法获取配置
+            logger.warning("⚠️ 未提供仓库信息，无法获取企业微信配置")
+            self.webhook_url = None
         
         if not self.webhook_url:
             logger.warning("⚠️ 企业微信Webhook URL未配置，推送功能将不可用")
         
-        logger.info(f"企业微信推送器初始化完成 - 仓库: {repo_owner}/{repo_name if repo_owner else '环境变量模式'}")
+        logger.info(f"企业微信推送器初始化完成 - 仓库: {repo_owner}/{repo_name if repo_owner else '无仓库信息'}")
     
     def get_unpushed_analysis_records(self, limit: int = 10) -> List:
         """

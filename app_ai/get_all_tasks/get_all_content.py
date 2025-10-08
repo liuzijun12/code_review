@@ -66,32 +66,35 @@ class RepositoryContentFetcher:
         repo_owner: Optional[str] = None, 
         repo_name: Optional[str] = None, 
         github_token: Optional[str] = None,
-        use_database: bool = False
+        use_database: bool = True  # 默认使用数据库
     ):
         """
-        Initialize from database, environment variables or parameters
+        Initialize from database or parameters
         
         Args:
             repo_owner: Repository owner
-            repo_name: Repository name
+            repo_name: Repository name  
             github_token: GitHub token (optional if use_database=True)
-            use_database: If True, fetch config from database
+            use_database: If True, fetch config from database (default: True)
         """
-        self.repo_owner = repo_owner or os.getenv('REPO_OWNER', '').strip()
-        self.repo_name = repo_name or os.getenv('REPO_NAME', '').strip()
+        self.repo_owner = repo_owner
+        self.repo_name = repo_name
         self.base_url = 'https://api.github.com'
         
+        # 如果没有提供仓库信息，抛出错误
         if not self.repo_owner or not self.repo_name:
-            raise ValueError("REPO_OWNER and REPO_NAME are required")
+            raise ValueError("repo_owner and repo_name are required")
         
-        # Get token from database or parameters/env
+        # Get token from database or parameters
         if use_database:
             token, error = get_repo_config_from_db(self.repo_owner, self.repo_name)
             if error:
                 raise ValueError(error)
             self.github_token = token
         else:
-            self.github_token = github_token or os.getenv('GITHUB_TOKEN', '').strip()
+            if not github_token:
+                raise ValueError("github_token is required when use_database=False")
+            self.github_token = github_token
     
     def _request(self, url: str) -> Optional[Dict]:
         """Make API request"""
@@ -179,16 +182,16 @@ def collect_files_info(
     file_types: Optional[List[str]] = None,
     repo_owner: Optional[str] = None,
     repo_name: Optional[str] = None,
-    use_database: bool = False
+    use_database: bool = True  # 默认使用数据库
 ) -> Dict:
     """
     [Function 1] Collect file information
     
     Args:
         file_types: File type list, e.g. ['.py', '.java'], None for all files
-        repo_owner: Repository owner (optional, read from env)
-        repo_name: Repository name (optional, read from env)
-        use_database: If True, fetch config from database
+        repo_owner: Repository owner (required)
+        repo_name: Repository name (required)
+        use_database: If True, fetch config from database (default: True)
     
     Returns:
         {
@@ -204,8 +207,7 @@ def collect_files_info(
         info = collect_files_info(
             file_types=['.py'],
             repo_owner='username',
-            repo_name='repo',
-            use_database=True
+            repo_name='repo'
         )
     """
     try:
@@ -247,7 +249,7 @@ def fetch_files_content(
     max_size_kb: int = 500,
     repo_owner: Optional[str] = None,
     repo_name: Optional[str] = None,
-    use_database: bool = False
+    use_database: bool = True  # 默认使用数据库
 ) -> Dict:
     """
     [Function 2] Fetch file content into variables
@@ -255,9 +257,9 @@ def fetch_files_content(
     Args:
         file_types: File types, e.g. ['.py', '.java']
         max_size_kb: Max file size (KB), default 500KB
-        repo_owner: Repository owner
-        repo_name: Repository name
-        use_database: If True, fetch config from database
+        repo_owner: Repository owner (required)
+        repo_name: Repository name (required) 
+        use_database: If True, fetch config from database (default: True)
     
     Returns:
         {
@@ -275,8 +277,7 @@ def fetch_files_content(
         result = fetch_files_content(
             file_types=['.py'],
             repo_owner='username',
-            repo_name='repo',
-            use_database=True
+            repo_name='repo'
         )
     """
     try:
@@ -330,22 +331,24 @@ def fetch_files_content(
 
 # ==================== Shortcut Functions ====================
 
-def get_python_files():
+def get_python_files(repo_owner: str, repo_name: str):
     """Quick fetch all Python files content"""
-    return fetch_files_content(file_types=['.py'])
+    return fetch_files_content(file_types=['.py'], repo_owner=repo_owner, repo_name=repo_name)
 
 
-def get_java_files():
+def get_java_files(repo_owner: str, repo_name: str):
     """Quick fetch all Java files content"""
-    return fetch_files_content(file_types=['.java'])
+    return fetch_files_content(file_types=['.java'], repo_owner=repo_owner, repo_name=repo_name)
 
 
-def get_code_files(languages: List[str]):
+def get_code_files(languages: List[str], repo_owner: str, repo_name: str):
     """
     Get code files by programming languages
     
     Args:
         languages: ['python', 'java', 'javascript', ...]
+        repo_owner: Repository owner
+        repo_name: Repository name
     
     Supported languages:
         python, java, javascript, typescript, go, rust, cpp, csharp
@@ -366,7 +369,7 @@ def get_code_files(languages: List[str]):
         if lang.lower() in lang_map:
             extensions.extend(lang_map[lang.lower()])
     
-    return fetch_files_content(file_types=extensions) if extensions else {'status': 'error', 'error': 'Unknown language'}
+    return fetch_files_content(file_types=extensions, repo_owner=repo_owner, repo_name=repo_name) if extensions else {'status': 'error', 'error': 'Unknown language'}
 
 
 def build_directory_tree(files: List[Dict]) -> str:
@@ -430,7 +433,7 @@ def format_content_with_structure(
     separator: str = "=" * 80,
     repo_owner: Optional[str] = None,
     repo_name: Optional[str] = None,
-    use_database: bool = False
+    use_database: bool = True  # 默认使用数据库
 ) -> str:
     """
     [Function 3] Get repository content with directory structure in a formatted string
@@ -513,8 +516,8 @@ def format_content_with_structure(
 if __name__ == '__main__':
     """
     Test Usage:
-    1. Configure .env file (REPO_OWNER, REPO_NAME, GITHUB_TOKEN)
-    2. Run: python app_ai/get_all_content.py
+    1. Configure repository info in database (Django Admin)
+    2. Run: python app_ai/get_all_tasks/get_all_content.py
     """
     import sys
     from dotenv import load_dotenv
@@ -530,20 +533,33 @@ if __name__ == '__main__':
     print("GitHub Repository Content Fetcher - Test")
     print("="*60 + "\n")
     
+    # Test repository info (replace with your actual repository)
+    test_repo_owner = "your-repo-owner"
+    test_repo_name = "your-repo-name"
+    
+    print(f"Note: This test uses repository: {test_repo_owner}/{test_repo_name}")
+    print("Make sure this repository is configured in the database.\n")
+    
     try:
         # Test 1: Collect file information
         print("[Test 1] Collect Python files information...")
-        info = collect_files_info(file_types=['.py'])
+        info = collect_files_info(
+            file_types=['.py'], 
+            repo_owner=test_repo_owner, 
+            repo_name=test_repo_name
+        )
         
         if info['status'] == 'success':
             print(f"[OK] Found {info['file_count']} Python files")
             for file in info['files'][:5]:  # Show first 5
                 print(f"   - {file['path']} ({file['size']} bytes)")
+        else:
+            print(f"[ERROR] {info.get('error', 'Unknown error')}")
         
         # Test 2: Fetch file content
         print(f"\n{'='*60}")
         print("[Test 2] Fetch Python files content...")
-        result = get_python_files()
+        result = get_python_files(test_repo_owner, test_repo_name)
         
         if result['status'] == 'success':
             print(f"[OK] Success")
@@ -555,11 +571,18 @@ if __name__ == '__main__':
             for i, (path, content) in enumerate(list(content_map.items())[:3], 1):
                 lines = len(content.split('\n'))
                 print(f"   {i}. {path} - {lines} lines")
+        else:
+            print(f"[ERROR] {result.get('error', 'Unknown error')}")
         
         # Test 3: Format content with directory structure
         print(f"\n{'='*60}")
         print("[Test 3] Format content with directory structure...")
-        content_str = format_content_with_structure(file_types=['.py'], max_size_kb=100)
+        content_str = format_content_with_structure(
+            file_types=['.py'], 
+            max_size_kb=100,
+            repo_owner=test_repo_owner,
+            repo_name=test_repo_name
+        )
         
         # Show preview (first 2000 chars)
         preview_length = 2000
@@ -577,21 +600,33 @@ if __name__ == '__main__':
         print(f"\n{'='*60}")
         print("[Tips] Usage Examples:")
         print("="*60)
-        print("""
-# Method 1: Collect file info
-info = collect_files_info(file_types=['.py', '.java'])
+        print(f"""
+# Method 1: Collect file info (requires repo_owner and repo_name)
+info = collect_files_info(
+    file_types=['.py', '.java'],
+    repo_owner='{test_repo_owner}',
+    repo_name='{test_repo_name}'
+)
 
 # Method 2: Fetch file content to variables
-result = fetch_files_content(file_types=['.py'])
-content_map = result['content_map']  # {path: content}
+result = fetch_files_content(
+    file_types=['.py'],
+    repo_owner='{test_repo_owner}',
+    repo_name='{test_repo_name}'
+)
+content_map = result['content_map']  # {{path: content}}
 
 # Method 3: Shortcut functions
-py_files = get_python_files()
-java_files = get_java_files()
-code_files = get_code_files(['python', 'java'])
+py_files = get_python_files('{test_repo_owner}', '{test_repo_name}')
+java_files = get_java_files('{test_repo_owner}', '{test_repo_name}')
+code_files = get_code_files(['python', 'java'], '{test_repo_owner}', '{test_repo_name}')
 
-# Method 4: Format with directory structure (NEW!)
-content_str = format_content_with_structure(file_types=['.py'])
+# Method 4: Format with directory structure
+content_str = format_content_with_structure(
+    file_types=['.py'],
+    repo_owner='{test_repo_owner}',
+    repo_name='{test_repo_name}'
+)
 # Now you have everything in one string variable with directory tree!
 
 # Save to file

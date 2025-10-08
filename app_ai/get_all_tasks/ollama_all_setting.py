@@ -30,7 +30,7 @@ class OllamaConfig:
         self.model_name = (
             os.getenv('OLLAMA_COMMIT_ANALYSIS_MODEL') or 
             os.getenv('OLLAMA_MODEL') or 
-            'qwen2.5-coder:7b'
+            'qwen2.5-coder:14b'
         ).strip()
         
         # Timeout settings
@@ -216,35 +216,45 @@ class OllamaAnalysisClient:
                 'error': str(e)
             }
     
-    def analyze_code(
-        self, 
-        code: str, 
-        filename: str = "code.py",
-        language: str = "Python"
-    ) -> Dict[str, Any]:
+    def _get_prompt_template(self, repo_owner: Optional[str] = None, repo_name: Optional[str] = None) -> Dict[str, Any]:
         """
-        Analyze code using Ollama
+        获取提示词模板，优先使用仓库配置的自定义模板，否则使用默认模板
         
         Args:
-            code: Code content to analyze
-            filename: File name (for context)
-            language: Programming language
-        
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            
         Returns:
-            Analysis result dict
+            Dict: {"template": str, "is_custom": bool}
         """
-        # Truncate if too long
-        if len(code) > self.max_code_length:
-            logger.warning(f"Code truncated: {len(code)} -> {self.max_code_length}")
-            code = code[:self.max_code_length] + "\n... [Content truncated]"
+        # 如果提供了仓库信息，尝试获取自定义模板
+        if repo_owner and repo_name:
+            try:
+                # 动态导入避免循环依赖
+                from app_ai.models import RepositoryConfig
+                
+                repo_config = RepositoryConfig.objects.filter(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    is_enabled=True
+                ).first()
+                
+                if repo_config and repo_config.ollama_prompt_template:
+                    logger.info(f"使用仓库 {repo_owner}/{repo_name} 的自定义提示词模板")
+                    return {"template": repo_config.ollama_prompt_template, "is_custom": True}
+                    
+            except Exception as e:
+                logger.warning(f"获取仓库配置失败，使用默认模板: {e}")
         
-        system_prompt = "You are a senior code reviewer specializing in code quality, security, and best practices."
-        
-        prompt = f"""
-Please review the following {language} code file: {filename}
+        # 返回默认模板
+        return {"template": self._get_default_template(), "is_custom": False}
+    
+    def _get_default_template(self) -> str:
+        """获取默认的代码分析提示词模板"""
+        return """Please review the following {language} code file: {filename}
 
 Code:
-```{language.lower()}
+```{language_lower}
 {code}
 ```
 
@@ -271,6 +281,52 @@ Provide a comprehensive code review covering:
 
 Please respond in Chinese with detailed analysis.
 """
+    
+    def analyze_code(
+        self, 
+        code: str, 
+        filename: str = "code.py",
+        language: str = "Python",
+        repo_owner: Optional[str] = None,
+        repo_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Analyze code using Ollama
+        
+        Args:
+            code: Code content to analyze
+            filename: File name (for context)
+            language: Programming language
+            repo_owner: Repository owner (for custom prompt)
+            repo_name: Repository name (for custom prompt)
+        
+        Returns:
+            Analysis result dict
+        """
+        # Truncate if too long
+        if len(code) > self.max_code_length:
+            logger.warning(f"Code truncated: {len(code)} -> {self.max_code_length}")
+            code = code[:self.max_code_length] + "\n... [Content truncated]"
+        
+        # Get prompt template (custom or default)
+        template_info = self._get_prompt_template(repo_owner, repo_name)
+        
+        # Build prompt based on template type
+        if template_info["is_custom"]:
+            # Custom template: concatenate code content
+            prompt = f"{template_info['template']}\n\n文件名: {filename}\n编程语言: {language}\n\n代码内容:\n```{language.lower()}\n{code}\n```"
+            logger.info("使用自定义提示词模板进行代码分析")
+        else:
+            # Default template: use placeholder replacement with processed values
+            prompt = template_info["template"].format(
+                language=language,
+                filename=filename,
+                code=code,
+                language_lower=language.lower()
+            )
+            logger.info("使用默认提示词模板进行代码分析")
+        
+        system_prompt = "You are a senior code reviewer specializing in code quality, security, and best practices."
         
         result = self.generate(prompt, system_prompt)
         
@@ -278,6 +334,7 @@ Please respond in Chinese with detailed analysis.
             result['filename'] = filename
             result['language'] = language
             result['code_length'] = len(code)
+            result['template_type'] = 'custom' if template_info["is_custom"] else 'default'
         
         return result
 
@@ -294,16 +351,9 @@ def get_ollama_client(base_url: Optional[str] = None, model_name: Optional[str] 
     
     Returns:
         OllamaAnalysisClient instance
+        
+    Note:
+        Use analyze_code method with repo_owner and repo_name parameters
+        to enable custom prompt templates from database.
     """
     return OllamaAnalysisClient(base_url, model_name)
-
-
-def test_connection() -> Dict[str, Any]:
-    """
-    Test Ollama service connection
-    
-    Returns:
-        Connection status dict
-    """
-    client = OllamaAnalysisClient()
-    return client.check_connection()

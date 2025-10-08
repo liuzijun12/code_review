@@ -44,7 +44,7 @@ class GitHubWebhookClient:
                 logger.error(f"❌ 加载仓库配置失败: {e}")
                 self.repo_config = None
         
-        # 设置配置属性（优先使用数据库配置，否则使用环境变量）
+        # 设置配置属性（优先使用数据库配置）
         if self.repo_config:
             self.webhook_secret = self.repo_config.webhook_secret
             self.allowed_owner = self.repo_config.repo_owner
@@ -52,19 +52,20 @@ class GitHubWebhookClient:
             self.github_token = self.repo_config.github_token
             self.wechat_webhook_url = self.repo_config.wechat_webhook_url
         else:
-            # 回退到环境变量配置
-            self.webhook_secret = os.getenv('GITHUB_WEBHOOK_SECRET', '')
-            self.allowed_owner = os.getenv('REPO_OWNER', '').strip()
-            self.allowed_name = os.getenv('REPO_NAME', '').strip()  
-            self.github_token = os.getenv('GITHUB_TOKEN', '')
-            self.wechat_webhook_url = os.getenv('WX_WEBHOOK_URL', '')
+            # 没有找到仓库配置，设置为空
+            logger.warning(f"⚠️ 未找到仓库配置: {repo_owner}/{repo_name}，功能将不可用")
+            self.webhook_secret = ''
+            self.allowed_owner = ''
+            self.allowed_name = ''
+            self.github_token = ''
+            self.wechat_webhook_url = ''
     
     def is_repo_enabled(self):
         """检查仓库是否启用"""
         if self.repo_config:
             return self.repo_config.is_enabled
-        # 环境变量模式下，如果配置了相关信息就认为是启用的
-        return bool(self.webhook_secret and self.allowed_owner and self.allowed_name)
+        # 没有配置时返回False
+        return False
     
     def verify_signature(self, payload_body, signature_header):
         """
@@ -379,15 +380,16 @@ class GitHubDataClient:
                 logger.info(f"✅ GitHubDataClient 加载仓库配置成功: {repo_owner}/{repo_name}")
             except RepositoryConfig.DoesNotExist:
                 logger.warning(f"⚠️ GitHubDataClient 未找到仓库配置: {repo_owner}/{repo_name}")
-                self.github_token = os.getenv('GITHUB_TOKEN', '')
+                self.github_token = ''
             except Exception as e:
                 logger.error(f"❌ GitHubDataClient 加载仓库配置失败: {e}")
-                self.github_token = os.getenv('GITHUB_TOKEN', '')
+                self.github_token = ''
         else:
-            # 回退到环境变量配置
-            self.github_token = os.getenv('GITHUB_TOKEN', '')
-            self.repo_owner = os.getenv('REPO_OWNER', '').strip()
-            self.repo_name = os.getenv('REPO_NAME', '').strip()
+            # 没有提供仓库信息，无法获取配置
+            logger.warning("⚠️ GitHubDataClient 未提供仓库信息，无法获取配置")
+            self.github_token = ''
+            self.repo_owner = ''
+            self.repo_name = ''
     
     def get_headers(self):
         """获取GitHub API请求头"""
