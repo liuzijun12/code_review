@@ -36,7 +36,7 @@ class GitHubWebhookClient:
                     repo_name=repo_name,
                     is_enabled=True
                 )
-                logger.info(f"✅ 加载仓库配置成功: {repo_owner}/{repo_name}")
+
             except RepositoryConfig.DoesNotExist:
                 logger.warning(f"⚠️ 未找到仓库配置: {repo_owner}/{repo_name}")
                 self.repo_config = None
@@ -53,7 +53,8 @@ class GitHubWebhookClient:
             self.wechat_webhook_url = self.repo_config.wechat_webhook_url
         else:
             # 没有找到仓库配置，设置为空
-            logger.warning(f"⚠️ 未找到仓库配置: {repo_owner}/{repo_name}，功能将不可用")
+            if repo_owner and repo_name:
+                logger.warning(f"⚠️ 仓库配置不可用: {repo_owner}/{repo_name}")
             self.webhook_secret = ''
             self.allowed_owner = ''
             self.allowed_name = ''
@@ -293,7 +294,7 @@ class GitHubWebhookClient:
         Returns:
             tuple: (sha, source) - SHA值和来源说明，如果未找到则返回 (None, None)
         """
-        logger.info("从 payload 中提取最新提交 SHA")
+
         
         # 优先使用 head_commit.id（最可靠）
         if payload.get('head_commit') and payload['head_commit'].get('id'):
@@ -314,11 +315,11 @@ class GitHubWebhookClient:
                 logger.info(f"从 commits[0] 获取最新 SHA: {sha[:8]}...{sha[-8:]}")
                 return sha, 'commits[0].id'
             else:
-                logger.warning("commits[0] 中没有 id 字段")
+                logger.warning("⚠️ commits[0] 中没有 id 字段")
                 return None, None
         
         # 所有方法都失败
-        logger.error("无法从 payload 中提取最新提交 SHA")
+        logger.error("❌ 无法从 payload 中提取提交 SHA")
         return None, None
     
     def validate_commit_sha(self, sha):
@@ -379,7 +380,7 @@ class GitHubDataClient:
                 self.github_token = self.repo_config.github_token
                 logger.info(f"✅ GitHubDataClient 加载仓库配置成功: {repo_owner}/{repo_name}")
             except RepositoryConfig.DoesNotExist:
-                logger.warning(f"⚠️ GitHubDataClient 未找到仓库配置: {repo_owner}/{repo_name}")
+                logger.warning(f"⚠️ 未找到仓库配置: {repo_owner}/{repo_name}")
                 self.github_token = ''
             except Exception as e:
                 logger.error(f"❌ GitHubDataClient 加载仓库配置失败: {e}")
@@ -412,7 +413,6 @@ class GitHubDataClient:
     
     def get_data(self, data_type, **params):
         """统一的GET数据接口 - 只支持单个提交处理"""
-        logger.info(f"请求GitHub数据，类型: {data_type}, 参数: {params}")
         
         if not self.repo_owner or not self.repo_name:
             logger.error("仓库配置未完成")
@@ -434,19 +434,16 @@ class GitHubDataClient:
         except Exception as e:
             logger.error(f"GitHub数据请求失败: {str(e)}")
             return {'error': f'Request failed: {str(e)}', 'status': 'error'}
-    
-    
-    # 批量处理方法已删除，现在只支持单个提交处理
-    
-    
+
+
     def _get_single_commit_detail(self, commit_sha, include_diff):
-        """获取单个提交的详细信息 - 直接用于Ollama分析"""
+        """获取提交的详细信息 - 直接用于Ollama分析"""
         
         if not commit_sha:
             logger.error("获取提交详情失败: 缺少commit SHA")
             return {'error': 'Commit SHA is required', 'status': 'error'}
         
-        logger.info(f"获取单个提交详情用于Ollama分析: SHA={commit_sha[:8]}")
+        logger.info(f"获取提交详情用于Ollama分析: SHA={commit_sha[:8]}")
         url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/commits/{commit_sha}"
         response = requests.get(url, headers=self.get_headers())
         

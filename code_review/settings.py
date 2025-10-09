@@ -32,24 +32,49 @@ load_dotenv(BASE_DIR / '.env')
 # See https://docs.djangoproject.com/en/4.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-2k=x9_t=1)sw*@#oabqe0*r34t*%goq95o^)$0*l_90rv4cb4*'
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-2k=x9_t=1)sw*@#oabqe0*r34t*%goq95o^)$0*l_90rv4cb4*')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-# 代理和转发配置
-USE_X_FORWARDED_HOST = True
-USE_X_FORWARDED_PORT = True
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')  # 支持反向代理的 HTTPS
+# 判断是否为生产环境
+IS_PRODUCTION = not DEBUG
 
-# HTTPS 安全配置（生产环境建议启用）
-# SECURE_SSL_REDIRECT = True  # 强制 HTTPS 重定向（生产环境启用）
-SECURE_HSTS_SECONDS = 0  # HTTP 严格传输安全（生产环境设置为 31536000）
-SECURE_HSTS_INCLUDE_SUBDOMAINS = False  # 生产环境设置为 True
-SECURE_HSTS_PRELOAD = False  # 生产环境设置为 True
+# 生产环境安全检查：强制要求安全的 SECRET_KEY
+if IS_PRODUCTION and 'insecure' in SECRET_KEY:
+    raise ValueError('⚠️ 生产环境必须设置安全的 SECRET_KEY 环境变量！请在 .env 文件中配置。')
 
-# ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,47.118.16.139,47.118.16.139:6000,47.118.16.139:6001').split(',')
-ALLOWED_HOSTS = ["*"]
+# 代理和转发配置（根据环境自动切换）
+if IS_PRODUCTION:
+    # 生产环境：假设有 Nginx/Caddy 等反向代理
+    USE_X_FORWARDED_HOST = True
+    USE_X_FORWARDED_PORT = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+else:
+    # 开发环境：直接访问，不需要代理头处理
+    USE_X_FORWARDED_HOST = False
+    USE_X_FORWARDED_PORT = False
+    SECURE_PROXY_SSL_HEADER = None
+
+# HTTPS 安全配置（根据环境自动切换）
+if IS_PRODUCTION:
+    SECURE_SSL_REDIRECT = True  # 生产环境：强制 HTTPS 重定向
+    SECURE_HSTS_SECONDS = 31536000  # 1年
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+else:
+    SECURE_SSL_REDIRECT = False  # 开发环境：不强制 HTTPS
+    SECURE_HSTS_SECONDS = 0
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+    SECURE_HSTS_PRELOAD = False
+
+# ALLOWED_HOSTS 配置
+if IS_PRODUCTION:
+    # 生产环境：只允许配置的域名
+    ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '47.118.16.173,www.wsztest.online').split(',')
+else:
+    # 开发环境：允许所有（方便本地开发和 ngrok 等工具）
+    ALLOWED_HOSTS = ["*"]
 
 # CSRF 和 Cookie 配置
 CSRF_TRUSTED_ORIGINS = [
@@ -69,26 +94,50 @@ CSRF_TRUSTED_ORIGINS = [
     'https://www.wsztest.online',
 ]
 
-# CSRF 配置 - 宽松兼容模式（兼容更多浏览器）
-# 说明：Lax 模式在大多数情况下都能工作，且兼容性最好
-CSRF_COOKIE_SECURE = False  # 改为 False，同时支持 HTTP 和 HTTPS
-CSRF_COOKIE_HTTPONLY = False  # 允许 JavaScript 读取 CSRF token
-CSRF_COOKIE_SAMESITE = 'Lax'  # Lax 模式兼容性最好，大部分场景够用
-CSRF_USE_SESSIONS = False
-CSRF_COOKIE_NAME = 'csrftoken'
-CSRF_COOKIE_DOMAIN = None  # 自动使用当前域名
+# ===== CSRF Cookie 安全配置（根据环境自动切换）=====
+if IS_PRODUCTION:
+    # 生产环境：严格安全模式
+    CSRF_COOKIE_SECURE = True       # 仅通过 HTTPS 传输（防中间人攻击）
+    CSRF_COOKIE_HTTPONLY = True     # 禁止 JavaScript 读取（防 XSS 攻击窃取 token）
+    CSRF_COOKIE_SAMESITE = 'Strict' # 严格同站策略（最安全）
+else:
+    # 开发环境：宽松模式（方便开发调试）
+    CSRF_COOKIE_SECURE = False      # 允许 HTTP 传输
+    CSRF_COOKIE_HTTPONLY = False    # 允许 JavaScript 读取
+    CSRF_COOKIE_SAMESITE = 'Lax'    # 宽松模式（兼容性好）
 
-# Session 配置
-SESSION_COOKIE_SECURE = False  # 改为 False，兼容 HTTP
-SESSION_COOKIE_SAMESITE = 'Lax'  # Lax 模式，兼容性好
-SESSION_COOKIE_HTTPONLY = True
+CSRF_USE_SESSIONS = False           # 使用 Cookie 存储（性能更好）
+CSRF_COOKIE_NAME = 'csrftoken'      # Cookie 名称
+CSRF_COOKIE_DOMAIN = None           # 自动使用当前域名
+CSRF_COOKIE_AGE = 31449600          # 1年有效期
 
-CORS_ALLOW_ALL_ORIGINS = True  # 开发环境使用，生产环境建议改为 False
+# ===== Session 会话配置（根据环境自动切换）=====
+if IS_PRODUCTION:
+    SESSION_COOKIE_SECURE = True    # 仅 HTTPS 传输
+    SESSION_COOKIE_SAMESITE = 'Strict'  # 严格模式
+else:
+    SESSION_COOKIE_SECURE = False   # 允许 HTTP
+    SESSION_COOKIE_SAMESITE = 'Lax' # 宽松模式
 
-CORS_ALLOW_CREDENTIALS = True
+SESSION_COOKIE_HTTPONLY = True      # 始终禁止 JS 访问（防 XSS）
+SESSION_COOKIE_AGE = 1209600        # 2周有效期
+
+# ===== CORS 跨域配置（根据环境自动切换）=====
+if IS_PRODUCTION:
+    # 生产环境：严格限制允许的源
+    CORS_ALLOW_ALL_ORIGINS = False
+    CORS_ALLOWED_ORIGINS = [
+        'https://47.118.16.173',
+        'https://www.wsztest.online',
+    ]
+    CORS_ALLOW_CREDENTIALS = True   # 允许携带 Cookie
+else:
+    # 开发环境：允许所有源（方便前端开发）
+    CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOW_CREDENTIALS = False  # 不需要携带 Cookie（避免冲突）
 
 CORS_ALLOW_HEADERS = list(__import__('corsheaders.defaults').defaults.default_headers) + [
-    'x-csrftoken',  # Django CSRF token（重要！）
+    'x-csrftoken',  # 允许前端通过此 header 发送 CSRF token
 ]
 
 # Application definition
@@ -178,13 +227,13 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/4.1/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'zh-hans'  # 中文简体
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Shanghai'  # 中国时区 (UTC+8)
 
 USE_I18N = True
 
-USE_TZ = True
+USE_TZ = True  # 使用时区感知的 datetime（推荐）
 
 
 # Static files (CSS, JavaScript, Images)
@@ -257,6 +306,11 @@ CELERY_WORKER_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s] %(messa
 CELERY_WORKER_TASK_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s][%(task_name)s(%(task_id)s)] %(message)s'
 
 # ===== 日志配置 =====
+import os as _log_os
+# 确保日志目录存在
+_LOG_DIR = BASE_DIR / 'logs'
+_LOG_DIR.mkdir(exist_ok=True)
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -275,17 +329,25 @@ LOGGING = {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
         },
+        'file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(_LOG_DIR / 'django.log'),
+            'maxBytes': 10 * 1024 * 1024,  # 10MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+            'encoding': 'utf-8',
+        },
     },
     'loggers': {
         'app_ai': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': True,
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
         },
         'django': {
-            'handlers': ['console'],
+            'handlers': ['console', 'file'],
             'level': 'INFO',
-            'propagate': True,
+            'propagate': False,
         },
     },
 }

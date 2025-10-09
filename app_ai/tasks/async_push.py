@@ -281,18 +281,18 @@ def _format_single_analysis_message(analysis_data):
         # 构造文件变更信息
         files_info = ""
         if modified_files:
-            files_info = "\n**📁 修改文件:**\n"
+            files_info = "\n\n修改文件\n"
             for file_info in modified_files[:5]:  # 最多显示5个文件
                 filename = file_info.get('filename', 'Unknown')
                 status = file_info.get('status', 'modified')
                 additions = file_info.get('additions', 0)
                 deletions = file_info.get('deletions', 0)
                 
-                status_emoji = {'added': '➕', 'removed': '➖', 'modified': '📝'}.get(status, '📝')
-                files_info += f"- {status_emoji} `{filename}` (+{additions}/-{deletions})\n"
+                status_text = {'added': '新增', 'removed': '删除', 'modified': '修改'}.get(status, '修改')
+                files_info += f"  {filename} ({status_text} +{additions}/-{deletions})\n"
             
             if len(modified_files) > 5:
-                files_info += f"- ... 还有 {len(modified_files) - 5} 个文件\n"
+                files_info += f"  还有 {len(modified_files) - 5} 个文件\n"
         
         # 构造统计信息
         stats_info = ""
@@ -300,34 +300,31 @@ def _format_single_analysis_message(analysis_data):
             total_additions = stats.get('total_additions', 0)
             total_deletions = stats.get('total_deletions', 0)
             files_changed = stats.get('files_changed', 0)
-            stats_info = f"\n**📊 变更统计:** {files_changed} 个文件，+{total_additions}/-{total_deletions}\n"
+            stats_info = f"\n变更统计: {files_changed} 个文件  新增 {total_additions} 行  删除 {total_deletions} 行\n"
         
         # 格式化时间
         try:
             from datetime import datetime
             commit_datetime = datetime.fromisoformat(commit_date.replace('Z', '+00:00'))
-            formatted_date = commit_datetime.strftime('%Y-%m-%d %H:%M:%S')
+            formatted_date = commit_datetime.strftime('%Y-%m-%d %H:%M')
         except:
             formatted_date = commit_date
         
         # 构造完整消息内容
-        markdown_content = f"""# 🤖 代码审查报告
+        markdown_content = f"""代码审查报告
 
-**📦 仓库:** {repository_name}
-**👤 作者:** {author_name}
-**🕐 时间:** {formatted_date}
-**🔗 链接:** [查看提交]({commit_url})
+仓库: {repository_name}
+作者: {author_name}
+时间: {formatted_date}
+[查看提交]({commit_url})
 
-## 📝 提交信息
-```
+提交信息
 {commit_message}
-```
 
-## 🔍 AI 分析建议
+AI 分析建议
 {analysis_suggestion}
 {files_info}{stats_info}
----
-*提交 SHA: `{commit_sha[:8]}...`*"""
+提交 SHA: {commit_sha[:8]}"""
 
         # 返回企业微信 Markdown 消息格式
         return {

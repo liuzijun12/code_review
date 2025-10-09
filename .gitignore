@@ -20,10 +20,16 @@ dist/
 
 # 日志文件
 *.log
+logs/
 
 # 数据库文件
 *.db
 *.sqlite3
+
+# SSL 证书文件
+*.crt
+*.key
+*.pem
 
 # 操作系统文件
 .DS_Store

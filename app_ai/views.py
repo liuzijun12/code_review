@@ -1,12 +1,11 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_http_methods, require_GET, require_POST
+from django.views.decorators.http import require_http_methods, require_GET
 from django.utils import timezone
 import json
-from .git_client import GitHubWebhookClient, GitHubDataClient
-from .schemas import is_valid_async_data_type, ASYNC_DATA_TYPES, success_response, error_response
+from .git_client import GitHubWebhookClient
+from .schemas import success_response, error_response
 from .tasks.async_get import fetch_github_data_async
-from .tasks.async_push import start_push_task
 from celery.result import AsyncResult
 import logging
 
@@ -29,7 +28,7 @@ def git_webhook(request):
         repo_name = None
         repo_owner = None
     
-    github_client = GitHubWebhookClient()
+    github_client = GitHubWebhookClient(repo_owner=repo_owner, repo_name=repo_name)
     is_valid, error_response_data, payload = github_client.validate_webhook_request(request, repo_owner, repo_name)
     
     if not is_valid:
@@ -89,99 +88,13 @@ def git_webhook(request):
         }))
     
     else:
-        logger.info(f"忽略事件类型: {event_type}")
         return JsonResponse(success_response({
             'event_type': event_type,
             'message': f'事件类型 {event_type} 已忽略'
         }))
 
 
-# ==================== 同步数据接口 ====================
-
-@require_GET
-def get_github_data(request):
-    """同步获取GitHub数据接口"""
-    data_type = request.GET.get('type', '').strip()
-    if not data_type:
-        return JsonResponse(error_response("Missing required parameter: type", 400), status=400)
-    
-    if not is_valid_async_data_type(data_type):
-        return JsonResponse(error_response(
-            f'Invalid data type. Must be one of: {", ".join(ASYNC_DATA_TYPES)}', 400
-        ), status=400)
-    
-    # 获取仓库信息
-    repo_owner = request.GET.get('repo_owner', '').strip()
-    repo_name = request.GET.get('repo_name', '').strip()
-    
-    # 简化参数处理，只获取基本参数
-    params = {
-        'branch': request.GET.get('branch', 'main'),
-        'limit': int(request.GET.get('limit', 10)),
-        'sha': request.GET.get('sha', ''),
-        'include_diff': request.GET.get('include_diff', 'true').lower() == 'true'
-    }
-    
-    # 使用仓库信息创建客户端
-    data_client = GitHubDataClient(repo_owner=repo_owner, repo_name=repo_name)
-    result = data_client.get_data(data_type, **params)
-    
-    if result.get('status') == 'error':
-        return JsonResponse(error_response(
-            result.get('error', 'Unknown error'), 500
-        ), status=500)
-    
-    return JsonResponse(success_response(result))
-        
-# ==================== 异步接口 ====================
-
-@require_POST
-@csrf_exempt
-def get_github_data_async(request):
-    """异步获取GitHub数据接口"""
-    try:
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return JsonResponse(error_response(
-                'body', 'Invalid JSON format'
-            ), status=400)
-        
-        data_type = data.get('type', '').strip()
-        if not data_type:
-            return JsonResponse(error_response("Missing required parameter: " + 'type'), status=400)
-        
-        if not is_valid_async_data_type(data_type):
-            return JsonResponse(error_response(
-                f'Invalid data type. Must be one of: {", ".join(ASYNC_DATA_TYPES)}', 400
-            ), status=400)
-        
-        # 获取仓库信息
-        repo_owner = data.get('repo_owner', '').strip()
-        repo_name = data.get('repo_name', '').strip()
-        params = data.get('params', {})
-        
-        task = fetch_github_data_async.delay(
-            data_type, 
-            repo_owner=repo_owner, 
-            repo_name=repo_name, 
-            **params
-        )
-        
-        logger.info(f"启动异步GitHub数据获取任务: {task.id}, 类型: {data_type}")
-        
-        return JsonResponse(success_response({
-            'task_id': task.id,
-            'status': 'pending',
-            'message': f'异步任务已启动，正在获取 {data_type} 数据',
-            'data_type': data_type,
-            'params': params,
-            'check_url': f'/ai/task-status/{task.id}/'
-        }))
-        
-    except Exception as e:
-        return JsonResponse(error_response(str(e)), status=500)
-
+# ==================== 任务状态查询接口 ====================
 
 @require_GET
 def get_task_status(request, task_id):
@@ -222,42 +135,6 @@ def get_task_status(request, task_id):
         
     except Exception as e:
         return JsonResponse(error_response(str(e)), status=500)
-
-
-@require_GET
-def get_commit_details_async_start(request):
-    """快速启动异步获取提交详情的任务"""
-    try:
-        sha = request.GET.get('sha', '').strip()
-        if not sha:
-            return JsonResponse(error_response("Missing required parameter: " + 'sha'), status=400)
-        
-        # 获取仓库信息
-        repo_owner = request.GET.get('repo_owner', '').strip()
-        repo_name = request.GET.get('repo_name', '').strip()
-        
-        include_diff = request.GET.get('include_diff', 'true').lower() == 'true'
-        task = fetch_github_data_async.delay(
-            'commit_details', 
-            repo_owner=repo_owner, 
-            repo_name=repo_name, 
-            sha=sha, 
-            include_diff=include_diff
-        )
-        
-        logger.info(f"启动异步获取提交详情任务: {task.id}, sha={sha[:8]}")
-        
-        return JsonResponse(success_response({
-            'task_id': task.id,
-            'status': 'pending',
-            'message': f'异步任务已启动，正在获取提交 {sha[:8]} 的详情',
-            'data_type': 'commit_details',
-            'params': {'sha': sha, 'include_diff': include_diff},
-            'check_url': f'/ai/task-status/{task.id}/'
-        }))
-        
-    except Exception as e:
-        return JsonResponse(error_response(str(e), 500), status=500)
 
 
 # ==================== 健康检查接口 ====================
@@ -350,40 +227,3 @@ def health_simple(request):
         'timestamp': timezone.now().isoformat(),
         'message': 'Application is running'
     }))
-
-
-# ==================== 推送接口 ====================
-
-@require_POST
-@csrf_exempt
-def start_push_task_api(request):
-    """启动推送任务"""
-    try:
-        data = json.loads(request.body)
-        delay_seconds = data.get('delay_seconds', 3)
-        repo_owner = data.get('repo_owner', '')
-        repo_name = data.get('repo_name', '')
-        
-        # 验证延迟时间
-        if not isinstance(delay_seconds, (int, float)) or delay_seconds < 0:
-            return JsonResponse(error_response('delay_seconds must be a non-negative number', 400), status=400)
-        
-        # 启动推送任务
-        task = start_push_task(delay_seconds, repo_owner, repo_name)
-        
-        logger.info(f"启动推送任务: {task.id}")
-        
-        return JsonResponse(success_response({
-            'task_id': task.id,
-            'message': '推送任务已启动',
-            'delay_seconds': delay_seconds,
-            'repo_owner': repo_owner,
-            'repo_name': repo_name,
-            'check_url': f'/ai/task-status/{task.id}/'
-        }))
-        
-    except json.JSONDecodeError:
-        return JsonResponse(error_response('Invalid JSON payload', 400), status=400)
-    except Exception as e:
-        logger.error(f"启动推送任务失败: {e}")
-        return JsonResponse(error_response(str(e), 500), status=500)

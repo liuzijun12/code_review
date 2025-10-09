@@ -619,9 +619,9 @@ Finally answer me in Chinese"""
         
         # 根据模板类型处理提示词
         if template_info["is_custom"]:
-            # 自定义模板：直接拼接代码内容
-            prompt = f"{template_info['template']}\n\n以下是需要审查的代码：\n```\n{code_content}\n```"
-            logger.info("使用自定义提示词模板，采用拼接方式")
+            # 自定义模板：代码在上，提示词在下（拼接方式）
+            prompt = f"以下是需要审查的代码：\n```\n{code_content}\n```\n\n{template_info['template']}"
+            logger.info("使用自定义提示词模板，采用拼接方式（代码在上，提示词在下）")
         else:
             # 默认模板：使用占位符替换
             prompt = template_info["template"].format(code_content=code_content)
@@ -687,11 +687,11 @@ Finally answer me in Chinese"""
         
         # 根据模板类型处理提示词
         if template_info["is_custom"]:
-            # 自定义模板：直接拼接提交信息和代码差异
-            prompt = f"{template_info['template']}\n\n"
-            prompt += f"提交信息: {commit_message}{author_info}\n\n"
-            prompt += f"代码变更:\n```diff\n{code_diff}\n```"
-            logger.info("使用自定义提示词模板，采用拼接方式")
+            # 自定义模板：提交信息和代码在上，提示词在下（拼接方式）
+            prompt = f"提交信息: {commit_message}{author_info}\n\n"
+            prompt += f"代码变更:\n```diff\n{code_diff}\n```\n\n"
+            prompt += template_info['template']
+            logger.info("使用自定义提示词模板，采用拼接方式（提交信息在上，提示词在下）")
         else:
             # 默认模板：使用占位符替换
             prompt = template_info["template"].format(
