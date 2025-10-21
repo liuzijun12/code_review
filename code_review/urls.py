@@ -30,11 +30,4 @@ urlpatterns = [
 
 # 静态文件服务配置
 if settings.DEBUG:
-    # 开发环境：Django 直接提供静态文件服务
-    # 使用 Django 的内置静态文件处理，会自动从 STATICFILES_DIRS 和 app 中查找
-    from django.contrib.staticfiles.urls import staticfiles_urlpatterns
-    urlpatterns += staticfiles_urlpatterns()
-else:
-    # 生产环境：静态文件由 Nginx/Apache 等 Web 服务器提供
-    # 使用收集后的静态文件
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
