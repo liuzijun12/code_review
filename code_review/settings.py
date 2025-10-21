@@ -71,7 +71,7 @@ else:
 # ALLOWED_HOSTS 配置
 if IS_PRODUCTION:
     # 生产环境：只允许配置的域名
-    ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '47.118.16.173,www.wsztest.online').split(',')
+    ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '47.118.16.173,www.wsztest.online,www.code-review.fun').split(',')
 else:
     # 开发环境：允许所有（方便本地开发和 ngrok 等工具）
     ALLOWED_HOSTS = ["*"]
@@ -85,6 +85,7 @@ CSRF_TRUSTED_ORIGINS = [
     'http://127.0.0.1:3000',
     'http://47.118.16.173:8000',
     'http://www.wsztest.online',
+    'http://www.code-review.fun',
     
     # HTTPS 地址（生产环境）
     'https://localhost:8000',
@@ -92,6 +93,7 @@ CSRF_TRUSTED_ORIGINS = [
     'https://47.118.16.173',
     'https://47.118.16.173:8000',
     'https://www.wsztest.online',
+    'https://www.code-review.fun',
 ]
 
 # ===== CSRF Cookie 安全配置（根据环境自动切换）=====
@@ -129,6 +131,7 @@ if IS_PRODUCTION:
     CORS_ALLOWED_ORIGINS = [
         'https://47.118.16.173',
         'https://www.wsztest.online',
+        'https://www.code-review.fun',
     ]
     CORS_ALLOW_CREDENTIALS = True   # 允许携带 Cookie
 else:
