@@ -28,5 +28,11 @@ urlpatterns = [
     path('ai/', include('app_ai.urls')),
 ]
 
-# 添加静态文件服务
-urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+# 静态文件服务配置
+if settings.DEBUG:
+    # 开发环境：Django 直接提供静态文件服务
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+else:
+    # 生产环境：静态文件由 Nginx/Apache 等 Web 服务器提供
+    # Django 不处理静态文件服务，提高性能
+    pass
